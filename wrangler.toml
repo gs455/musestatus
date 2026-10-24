@@ -2,7 +2,12 @@ name = "musestatus"
 pages_build_output_dir = "public"
 compatibility_date = "2026-10-01"
 
-# Published sections, file-system chunks, preference bodies and view state.
-[[kv_namespaces]]
-binding = "MUSESTATUS_DATA"
-id = "a2ab81f37f054544b318cbf59392736e"
+# Published sections, file-system rows, preference bodies and view state.
+# D1 (not KV — see the worker header for the 2026-10-23 quota incident).
+# The database is anvari-hub: the VM's API token cannot create D1 databases
+# (401 code 10000), so musestatus uses prefixed tables (musestatus_*) there
+# until a dedicated database exists; only the binding id changes then.
+[[d1_databases]]
+binding = "MUSESTATUS_DB"
+database_name = "anvari-hub"
+database_id = "6165a13e-d881-44dc-b3af-d502d00fdfeb"

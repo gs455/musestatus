@@ -10,9 +10,9 @@ Served at **https://armanai.pages.dev/musestatus/** behind the hub sign-in. Neve
 |---|---|
 | `public/index.html` | The page shell and all styles. |
 | `public/app.js` | The whole app: pane machinery, table editing, and the section renderers. Data comes from `api/data` at view time — nothing is baked in. |
-| `public/_worker.js` | Gate (hub proxy key) + `api/prefs` (view state in KV) + `api/data` / `api/fs` / `api/prefbody` (published snapshots) + `api/publish` (publisher intake) + static files. |
+| `public/_worker.js` | Gate (hub proxy key) + `api/prefs` (view state in D1) + `api/data` / `api/fs` / `api/prefbody` (published snapshots) + `api/publish` (publisher intake) + static files. |
 | `public/changelog.html` | Release notes, newest first. |
-| `wrangler.toml` | Pages config and the KV binding `MUSESTATUS_DATA`. |
+| `wrangler.toml` | Pages config and the D1 binding `MUSESTATUS_DB`. |
 | `test-worker.mjs` | Node smoke test for the worker (gate, publish auth, prefs, fs). Run: `node test-worker.mjs`. |
 
 ## How it is served
@@ -28,7 +28,7 @@ Two secrets gate the worker, and both fail closed when unset:
 
 ## Sync
 
-View state (pane order, hidden panes, labels, column widths, sliders, theme, stars) is kept in the browser for a fast first paint and synced to KV through `api/prefs` (key `view-state`). The page waits for a 2-second pause and sends only real changes; the worker skips writes when nothing changed (KV allows 1,000 writes a day).
+View state (pane order, hidden panes, labels, column widths, sliders, theme, stars) is kept in the browser for a fast first paint and synced to D1 through `api/prefs` (table `musestatus_view_state`). The page waits for a 2-second pause and sends only real changes; the worker skips the write when nothing changed. All app storage is D1: the first KV-backed publish on 2026-10-23 wrote ~958 keys in one evening and nearly exhausted the account's daily free-tier KV write cap, so the data layer was migrated to D1 the same night (tables prefixed `musestatus_` in the `anvari-hub` database — the VM's API token cannot create D1 databases; the worker creates its tables on first use).
 
 ## Refreshing the data
 

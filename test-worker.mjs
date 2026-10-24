@@ -1,4 +1,4 @@
-// Smoke test for public/_worker.js — stubs KV and ASSETS, no network.
+// Smoke test for public/_worker.js — stubs D1 and ASSETS, no network.
 // Run: node test-worker.mjs
 import worker from "./public/_worker.js";
 
@@ -12,27 +12,91 @@ function check(name, condition, extra) {
   }
 }
 
-// --- In-memory KV stub -------------------------------------------------------
-function makeKv() {
-  const map = new Map();
+// --- In-memory D1 stub -------------------------------------------------------
+// Implements just the SQL surface the worker uses: CREATE TABLE (no-op),
+// single-row lookups, IN(...) lookups, upserts and deletes, over Maps.
+function makeDb() {
+  const tables = {
+    musestatus_sections: new Map(),
+    musestatus_fs: new Map(),
+    musestatus_pref_bodies: new Map(),
+    musestatus_view_state: new Map(),
+  };
+
+  function runStatement(sql, params) {
+    const text = sql.replace(/\s+/g, " ").trim();
+    if (text.startsWith("CREATE TABLE")) return { results: [] };
+    let match = text.match(/^SELECT body FROM musestatus_view_state WHERE id = 1$/);
+    if (match) {
+      const row = tables.musestatus_view_state.get(1);
+      return { first: row || null, results: row ? [row] : [] };
+    }
+    match = text.match(/^INSERT INTO musestatus_view_state \(id, body\) VALUES \(1, \?\)/);
+    if (match) {
+      tables.musestatus_view_state.set(1, { id: 1, body: params[0] });
+      return { results: [] };
+    }
+    match = text.match(/^SELECT name, stamp, data FROM musestatus_sections$/);
+    if (match) return { results: [...tables.musestatus_sections.values()] };
+    match = text.match(/^SELECT stamp, children FROM musestatus_fs WHERE path = \?$/);
+    if (match) {
+      const row = tables.musestatus_fs.get(params[0]);
+      return { first: row || null, results: row ? [row] : [] };
+    }
+    match = text.match(/^SELECT name, path, body FROM musestatus_pref_bodies WHERE id = \?$/);
+    if (match) {
+      const row = tables.musestatus_pref_bodies.get(params[0]);
+      return { first: row || null, results: row ? [row] : [] };
+    }
+    match = text.match(/^SELECT (.+) FROM (musestatus_\w+) WHERE (\w+) IN \(/);
+    if (match) {
+      const table = tables[match[2]];
+      const rows = params.map((key) => table.get(String(key))).filter(Boolean);
+      return { results: rows };
+    }
+    match = text.match(/^INSERT INTO (musestatus_\w+) \(([^)]+)\) VALUES/);
+    if (match) {
+      const table = tables[match[1]];
+      const columns = match[2].split(",").map((name) => name.trim());
+      const row = {};
+      columns.forEach((column, index) => { row[column] = params[index]; });
+      table.set(String(params[0]), row);
+      return { results: [] };
+    }
+    match = text.match(/^DELETE FROM musestatus_fs WHERE path = \?$/);
+    if (match) {
+      tables.musestatus_fs.delete(params[0]);
+      return { results: [] };
+    }
+    throw new Error("fake D1 does not understand SQL: " + text);
+  }
+
+  function prepare(sql) {
+    const statement = {
+      params: [],
+      bind(...params) { statement.params = params; return statement; },
+      async first() { return runStatement(sql, statement.params).first ?? null; },
+      async all() { return { results: runStatement(sql, statement.params).results || [] }; },
+      async run() { runStatement(sql, statement.params); return { success: true }; },
+      _sql: sql,
+    };
+    return statement;
+  }
+
   return {
-    map,
-    async get(key) { return map.has(key) ? map.get(key) : null; },
-    async put(key, value) { map.set(key, String(value)); },
-    async delete(key) { map.delete(key); },
-    async list(options) {
-      const prefix = (options && options.prefix) || "";
-      const keys = [...map.keys()].filter((key) => key.startsWith(prefix)).map((name) => ({ name }));
-      return { keys, list_complete: true, cursor: undefined };
+    tables,
+    prepare,
+    async batch(statements) {
+      return statements.map((statement) => runStatement(statement._sql, statement.params));
     },
   };
 }
 
-function makeEnv(kv) {
+function makeEnv(db) {
   return {
     HUB_PROXY_KEY: "hub-key-123",
     PUBLISH_KEY: "publish-key-456",
-    MUSESTATUS_DATA: kv,
+    MUSESTATUS_DB: db,
     ASSETS: {
       async fetch(request) {
         const url = new URL(request.url);
@@ -47,8 +111,8 @@ function req(path, options) {
   return new Request("https://musestatus.pages.dev" + path, options || {});
 }
 
-const kv = makeKv();
-const env = makeEnv(kv);
+const db = makeDb();
+const env = makeEnv(db);
 
 // 1. Gate: page request without the key redirects to the hub path.
 {
@@ -65,7 +129,7 @@ const env = makeEnv(kv);
 {
   const res = await worker.fetch(req("/", { headers: { "X-Hub-Proxy-Key": "wrong" } }), env);
   check("gate 302 on wrong key", res.status === 302);
-  const openEnv = makeEnv(makeKv());
+  const openEnv = makeEnv(makeDb());
   delete openEnv.HUB_PROXY_KEY;
   const res2 = await worker.fetch(req("/api/data", { headers: GATE }), openEnv);
   check("gate fails closed when secret unset", res2.status === 401, "status=" + res2.status);
@@ -76,11 +140,12 @@ const env = makeEnv(kv);
   const text = await res.text();
   check("assets served at stripped path", res.status === 200 && text === "asset:/app.js", text);
 }
-// 5. Publish: missing / wrong bearer key is a 401.
+// 5. Publish: missing / wrong bearer key is a 401 (publish has its own auth,
+// no hub key involved).
 {
-  const res = await worker.fetch(req("/api/publish", { method: "POST", headers: { ...GATE, "content-type": "application/json" }, body: "{}" }), env);
+  const res = await worker.fetch(req("/api/publish", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), env);
   check("publish 401 without bearer", res.status === 401, "status=" + res.status);
-  const res2 = await worker.fetch(req("/api/publish", { method: "POST", headers: { ...GATE, Authorization: "Bearer nope" }, body: "{}" }), env);
+  const res2 = await worker.fetch(req("/api/publish", { method: "POST", headers: { Authorization: "Bearer nope" }, body: "{}" }), env);
   check("publish 401 with wrong bearer", res2.status === 401);
 }
 // 6. Publish: a full payload writes sections, folders and bodies; a repeat is all skips.
@@ -93,15 +158,15 @@ const env = makeEnv(kv);
     fsFolders: [{ path: "/home/hatch", stamp: 1700000000000, children: [{ n: "a.txt", d: false, s: 10, m: 1700000000000 }] }],
     prefBodies: [{ id: "f1", name: "MEMORY.md", path: "/home/hatch/MEMORY.md", body: "hello" }],
   };
-  const init = { method: "POST", headers: { ...GATE, Authorization: "Bearer publish-key-456", "content-type": "application/json" }, body: JSON.stringify(payload) };
+  const init = { method: "POST", headers: { Authorization: "Bearer publish-key-456", "content-type": "application/json" }, body: JSON.stringify(payload) };
   const res = await worker.fetch(req("/api/publish", init), env);
   const body = await res.json();
-  check("publish writes 4 keys", res.status === 200 && body.written === 4 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
+  check("publish writes 4 rows", res.status === 200 && body.written === 4 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
   const res2 = await worker.fetch(req("/api/publish", init), env);
   const body2 = await res2.json();
   check("publish repeat skips unchanged", body2.written === 0 && body2.skipped === 4, JSON.stringify(body2));
 }
-// 7. Prefs roundtrip: empty is "null", PUT stores, GET returns it, same PUT is a no-op write-wise.
+// 7. Prefs roundtrip: empty is "null", PUT stores, GET returns it.
 {
   const res = await worker.fetch(req("/api/prefs", { headers: GATE }), env);
   check("prefs empty reads null", (await res.text()) === "null");
@@ -135,11 +200,11 @@ const env = makeEnv(kv);
   check("prefbody get", res.status === 200 && body.body === "hello", "status=" + res.status);
   const del = await worker.fetch(req("/api/publish", {
     method: "POST",
-    headers: { ...GATE, Authorization: "Bearer publish-key-456", "content-type": "application/json" },
+    headers: { Authorization: "Bearer publish-key-456", "content-type": "application/json" },
     body: JSON.stringify({ fsDeleted: ["/home/hatch"] }),
   }), env);
   const delBody = await del.json();
-  check("publish deletes fs keys", delBody.deleted === 1, JSON.stringify(delBody));
+  check("publish deletes fs rows", delBody.deleted === 1, JSON.stringify(delBody));
   const res2 = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/home/hatch"), { headers: GATE }), env);
   check("fs get 404 after delete", res2.status === 404);
 }
