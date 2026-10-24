@@ -70,7 +70,8 @@ function loadState() {
 let syncTimer = null;
 function saveState() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (error) { /* storage blocked */ }
-  // KV allows 1,000 writes a day, so wait for a 2-second pause and only send real changes.
+  // Writes cost budget, so wait for a 2-second pause after the last change
+  // and only send real changes (pushPrefs also skips identical state).
   clearTimeout(syncTimer);
   syncTimer = setTimeout(pushPrefs, 2000);
 }

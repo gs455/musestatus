@@ -27,10 +27,11 @@
 //     the stored hash and writes ONLY rows that actually differ. A
 //     no-change publish writes zero rows.
 //   - The file-system tree is stored as chunk rows (musestatus_chunks):
-//     folders sorted by path, ~500 folders per chunk JSON blob, plus one
-//     manifest chunk mapping each folder path to its chunk. A worst-case
-//     full republish of the tree is ~46 chunk rows; a typical run changes
-//     a chunk or two. There are no per-folder rows.
+//     hash buckets — a folder's bucket is sha256(path) mod 48, computed
+//     identically by the publisher, so bucket membership never shifts
+//     when folders come and go elsewhere and no manifest is needed. A
+//     worst-case full republish of the tree is 48 chunk rows; a typical
+//     run changes a bucket or two. There are no per-folder rows.
 //   - Preference file bodies live in the same chunks table as pref:<id>
 //     rows, one per file, hash-gated the same way.
 //   - The worker creates/migrates its tables on first use (the VM's API
@@ -45,7 +46,9 @@ const MAX_PREFS_BYTES = 200000;
 const MAX_PUBLISH_BYTES = 12 * 1024 * 1024;
 // Keep IN(...) lookups and batch writes modest per call.
 const SQL_CHUNK = 100;
-const FS_MANIFEST_ID = "fs:manifest";
+// File-system hash buckets — MUST match FS_BUCKETS in the publisher
+// (~/workspace/muse-status-app/publish.py).
+const FS_BUCKETS = 48;
 
 function jsonResponse(value, status) {
   return new Response(JSON.stringify(value), {
@@ -132,6 +135,15 @@ async function runBatched(db, statements) {
     if (group.length === 0) continue;
     await db.batch(group);
   }
+}
+
+// The fs bucket holding a folder path: first 4 bytes of sha256(path),
+// mod FS_BUCKETS — the same computation the publisher does in Python
+// (int(sha256(path).hexdigest()[:8], 16) % 48).
+async function fsBucketId(dirPath) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(dirPath));
+  const bucket = new DataView(digest).getUint32(0) % FS_BUCKETS;
+  return "fs:b" + String(bucket).padStart(2, "0");
 }
 
 // Read one chunk row's parsed payload, or null when absent/corrupt.
@@ -228,17 +240,14 @@ export default {
     }
 
     // --- One folder of the file-system snapshot -----------------------------
-    // Resolved through the manifest chunk: folder path -> chunk id -> the
-    // folder's entry inside that chunk's payload.
+    // Resolved through the folder's hash bucket: bucket id from the path,
+    // then the folder's entry inside that bucket chunk's payload.
     if (path === "/api/fs" && request.method === "GET") {
       const dirPath = url.searchParams.get("path");
       if (!dirPath) return jsonResponse({ error: "missing path" }, 400);
       if (!db) return jsonResponse({ error: "not found" }, 404);
       await ensureSchema(db);
-      const manifest = await readChunk(db, FS_MANIFEST_ID);
-      const chunkId = manifest ? manifest[dirPath] : null;
-      if (!chunkId) return jsonResponse({ error: "not found" }, 404);
-      const folders = await readChunk(db, chunkId);
+      const folders = await readChunk(db, await fsBucketId(dirPath));
       const entry = folders ? folders[dirPath] : null;
       if (!entry) return jsonResponse({ error: "not found" }, 404);
       return jsonResponse({ stamp: entry.stamp, children: entry.children });

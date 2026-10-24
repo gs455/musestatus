@@ -1,6 +1,13 @@
 // Smoke test for public/_worker.js — stubs D1 and ASSETS, no network.
 // Run: node test-worker.mjs
+import { createHash } from "node:crypto";
 import worker from "./public/_worker.js";
+
+// The fs bucket for a path, computed exactly as worker + publisher do.
+function bucketId(path) {
+  const hex = createHash("sha256").update(path, "utf8").digest("hex");
+  return "fs:b" + String(parseInt(hex.slice(0, 8), 16) % 48).padStart(2, "0");
+}
 
 let failures = 0;
 function check(name, condition, extra) {
@@ -165,24 +172,23 @@ const env = makeEnv(db);
       fsmeta: { stamp: 1700000000000, hash: "hash-fsmeta", data: { root: "/home/hatch", totalFiles: 3 } },
     },
     fsChunks: [
-      { id: "fs:manifest", hash: "hash-manifest", payload: { "/home/hatch": "fs:00000" } },
-      { id: "fs:00000", hash: "hash-chunk0", payload: { "/home/hatch": { stamp: 1700000000000, children: [{ n: "a.txt", d: false, s: 10, m: 1700000000000 }] } } },
+      { id: bucketId("/home/hatch"), hash: "hash-chunk0", payload: { "/home/hatch": { stamp: 1700000000000, children: [{ n: "a.txt", d: false, s: 10, m: 1700000000000 }] } } },
     ],
     prefBodies: [{ id: "f1", hash: "hash-body1", name: "MEMORY.md", path: "/home/hatch/MEMORY.md", body: "hello" }],
   };
   const init = { method: "POST", headers: { Authorization: "Bearer publish-key-456", "content-type": "application/json" }, body: JSON.stringify(payload) };
   const res = await worker.fetch(req("/api/publish", init), env);
   const body = await res.json();
-  check("publish writes 5 rows", res.status === 200 && body.written === 5 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
+  check("publish writes 4 rows", res.status === 200 && body.written === 4 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
   const res2 = await worker.fetch(req("/api/publish", init), env);
   const body2 = await res2.json();
-  check("publish repeat skips all (hash gate)", body2.written === 0 && body2.skipped === 5, JSON.stringify(body2));
+  check("publish repeat skips all (hash gate)", body2.written === 0 && body2.skipped === 4, JSON.stringify(body2));
   // A changed hash writes exactly that one row.
   const changed = JSON.parse(JSON.stringify(payload));
   changed.sections.machines = { stamp: 1700000001000, hash: "hash-machines-2", data: { cols: ["Label"], rows: [["Omnist"]] } };
   const res3 = await worker.fetch(req("/api/publish", { ...init, body: JSON.stringify(changed) }), env);
   const body3 = await res3.json();
-  check("publish changed hash writes 1 row", body3.written === 1 && body3.skipped === 4, JSON.stringify(body3));
+  check("publish changed hash writes 1 row", body3.written === 1 && body3.skipped === 3, JSON.stringify(body3));
 }
 // 7. Prefs roundtrip: empty is "null", PUT stores, GET returns it.
 {
@@ -219,7 +225,7 @@ const env = makeEnv(db);
   const del = await worker.fetch(req("/api/publish", {
     method: "POST",
     headers: { Authorization: "Bearer publish-key-456", "content-type": "application/json" },
-    body: JSON.stringify({ fsChunksDeleted: ["fs:00000"] }),
+    body: JSON.stringify({ fsChunksDeleted: [bucketId("/home/hatch")] }),
   }), env);
   const delBody = await del.json();
   check("publish deletes chunk rows", delBody.deleted === 1, JSON.stringify(delBody));
