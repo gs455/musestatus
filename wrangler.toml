@@ -1,0 +1,8 @@
+name = "musestatus"
+pages_build_output_dir = "public"
+compatibility_date = "2026-10-01"
+
+# Published sections, file-system chunks, preference bodies and view state.
+[[kv_namespaces]]
+binding = "MUSESTATUS_DATA"
+id = "a2ab81f37f054544b318cbf59392736e"

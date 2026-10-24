@@ -1,0 +1,148 @@
+// Smoke test for public/_worker.js — stubs KV and ASSETS, no network.
+// Run: node test-worker.mjs
+import worker from "./public/_worker.js";
+
+let failures = 0;
+function check(name, condition, extra) {
+  if (condition) {
+    console.log("ok   " + name);
+  } else {
+    failures += 1;
+    console.log("FAIL " + name + (extra ? " — " + extra : ""));
+  }
+}
+
+// --- In-memory KV stub -------------------------------------------------------
+function makeKv() {
+  const map = new Map();
+  return {
+    map,
+    async get(key) { return map.has(key) ? map.get(key) : null; },
+    async put(key, value) { map.set(key, String(value)); },
+    async delete(key) { map.delete(key); },
+    async list(options) {
+      const prefix = (options && options.prefix) || "";
+      const keys = [...map.keys()].filter((key) => key.startsWith(prefix)).map((name) => ({ name }));
+      return { keys, list_complete: true, cursor: undefined };
+    },
+  };
+}
+
+function makeEnv(kv) {
+  return {
+    HUB_PROXY_KEY: "hub-key-123",
+    PUBLISH_KEY: "publish-key-456",
+    MUSESTATUS_DATA: kv,
+    ASSETS: {
+      async fetch(request) {
+        const url = new URL(request.url);
+        return new Response("asset:" + url.pathname, { status: 200 });
+      },
+    },
+  };
+}
+
+const GATE = { "X-Hub-Proxy-Key": "hub-key-123" };
+function req(path, options) {
+  return new Request("https://musestatus.pages.dev" + path, options || {});
+}
+
+const kv = makeKv();
+const env = makeEnv(kv);
+
+// 1. Gate: page request without the key redirects to the hub path.
+{
+  const res = await worker.fetch(req("/"), env);
+  check("gate 302 on page without key", res.status === 302 && res.headers.get("location") === "https://armanai.pages.dev/musestatus/", "status=" + res.status);
+}
+// 2. Gate: API request without the key is a 401 JSON.
+{
+  const res = await worker.fetch(req("/api/data"), env);
+  const body = await res.json();
+  check("gate 401 on api without key", res.status === 401 && body.error === "unauthorized", "status=" + res.status);
+}
+// 3. Gate: wrong key also fails, and an unset secret fails closed.
+{
+  const res = await worker.fetch(req("/", { headers: { "X-Hub-Proxy-Key": "wrong" } }), env);
+  check("gate 302 on wrong key", res.status === 302);
+  const openEnv = makeEnv(makeKv());
+  delete openEnv.HUB_PROXY_KEY;
+  const res2 = await worker.fetch(req("/api/data", { headers: GATE }), openEnv);
+  check("gate fails closed when secret unset", res2.status === 401, "status=" + res2.status);
+}
+// 4. Static asset passes through with the hub prefix stripped.
+{
+  const res = await worker.fetch(req("/musestatus/app.js", { headers: GATE }), env);
+  const text = await res.text();
+  check("assets served at stripped path", res.status === 200 && text === "asset:/app.js", text);
+}
+// 5. Publish: missing / wrong bearer key is a 401.
+{
+  const res = await worker.fetch(req("/api/publish", { method: "POST", headers: { ...GATE, "content-type": "application/json" }, body: "{}" }), env);
+  check("publish 401 without bearer", res.status === 401, "status=" + res.status);
+  const res2 = await worker.fetch(req("/api/publish", { method: "POST", headers: { ...GATE, Authorization: "Bearer nope" }, body: "{}" }), env);
+  check("publish 401 with wrong bearer", res2.status === 401);
+}
+// 6. Publish: a full payload writes sections, folders and bodies; a repeat is all skips.
+{
+  const payload = {
+    sections: {
+      machines: { stamp: 1700000000000, data: { cols: ["Label"], rows: [["Geekom"]] } },
+      fsmeta: { stamp: 1700000000000, data: { root: "/home/hatch", totalFiles: 3 } },
+    },
+    fsFolders: [{ path: "/home/hatch", stamp: 1700000000000, children: [{ n: "a.txt", d: false, s: 10, m: 1700000000000 }] }],
+    prefBodies: [{ id: "f1", name: "MEMORY.md", path: "/home/hatch/MEMORY.md", body: "hello" }],
+  };
+  const init = { method: "POST", headers: { ...GATE, Authorization: "Bearer publish-key-456", "content-type": "application/json" }, body: JSON.stringify(payload) };
+  const res = await worker.fetch(req("/api/publish", init), env);
+  const body = await res.json();
+  check("publish writes 4 keys", res.status === 200 && body.written === 4 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
+  const res2 = await worker.fetch(req("/api/publish", init), env);
+  const body2 = await res2.json();
+  check("publish repeat skips unchanged", body2.written === 0 && body2.skipped === 4, JSON.stringify(body2));
+}
+// 7. Prefs roundtrip: empty is "null", PUT stores, GET returns it, same PUT is a no-op write-wise.
+{
+  const res = await worker.fetch(req("/api/prefs", { headers: GATE }), env);
+  check("prefs empty reads null", (await res.text()) === "null");
+  const state = JSON.stringify({ paneOrder: ["machines"], stars: ["x"] });
+  const put = await worker.fetch(req("/api/prefs", { method: "PUT", headers: { ...GATE, "content-type": "application/json" }, body: state }), env);
+  check("prefs PUT is 204", put.status === 204, "status=" + put.status);
+  const res2 = await worker.fetch(req("/api/prefs", { headers: GATE }), env);
+  check("prefs roundtrip", (await res2.text()) === state);
+  const bad = await worker.fetch(req("/api/prefs", { method: "PUT", headers: { ...GATE }, body: "{nope" }), env);
+  check("prefs PUT rejects bad json", bad.status === 400, "status=" + bad.status);
+}
+// 8. Data assembly: sections come back keyed by name, fsmeta included.
+{
+  const res = await worker.fetch(req("/api/data", { headers: GATE }), env);
+  const body = await res.json();
+  check("data assembles sections", body.sections && body.sections.machines && body.sections.machines.data.rows[0][0] === "Geekom" && body.sections.fsmeta.data.root === "/home/hatch", JSON.stringify(Object.keys(body.sections || {})));
+  check("data is no-store", (res.headers.get("cache-control") || "").includes("no-store"));
+}
+// 9. FS get: known folder returns children, unknown is a 404 JSON.
+{
+  const res = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/home/hatch"), { headers: GATE }), env);
+  const body = await res.json();
+  check("fs get returns children", res.status === 200 && body.children[0].n === "a.txt", "status=" + res.status);
+  const res2 = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/nope"), { headers: GATE }), env);
+  check("fs get 404 when absent", res2.status === 404, "status=" + res2.status);
+}
+// 10. Prefbody get + publish delete path.
+{
+  const res = await worker.fetch(req("/api/prefbody?id=f1", { headers: GATE }), env);
+  const body = await res.json();
+  check("prefbody get", res.status === 200 && body.body === "hello", "status=" + res.status);
+  const del = await worker.fetch(req("/api/publish", {
+    method: "POST",
+    headers: { ...GATE, Authorization: "Bearer publish-key-456", "content-type": "application/json" },
+    body: JSON.stringify({ fsDeleted: ["/home/hatch"] }),
+  }), env);
+  const delBody = await del.json();
+  check("publish deletes fs keys", delBody.deleted === 1, JSON.stringify(delBody));
+  const res2 = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/home/hatch"), { headers: GATE }), env);
+  check("fs get 404 after delete", res2.status === 404);
+}
+
+console.log(failures ? "\n" + failures + " failure(s)" : "\nAll tests passed");
+process.exit(failures ? 1 : 0);
