@@ -12,7 +12,8 @@
 //   3. Published data: GET api/data, api/fs and api/prefbody serve the
 //      snapshots the VM publisher cron (musestatus-publish) pushes in.
 //   4. Publish: POST api/publish accepts those snapshots from the VM, guarded
-//      by a separate publish key. Everything else is a static file.
+//      by its own publish key and exempt from the hub gate (the publisher
+//      connects directly). Everything else is a static file.
 //
 // All links and fetches in the page are relative, because the hub strips (or
 // keeps) the /musestatus prefix depending on the route — this worker strips a
@@ -42,6 +43,11 @@ export default {
     const url = new URL(request.url);
     const path = stripHubPrefix(url.pathname);
     const isApi = path === "/api" || path.startsWith("/api/");
+
+    // Publish goes first: it has its own Bearer auth and no hub key.
+    if (path === "/api/publish" && request.method === "POST") {
+      return handlePublish(request, env);
+    }
 
     // --- Gate -------------------------------------------------------------
     // Fail closed when the secret is unset: an unconfigured deployment must
@@ -128,78 +134,6 @@ export default {
       });
     }
 
-    // --- Publisher intake -----------------------------------------------------
-    if (path === "/api/publish" && request.method === "POST") {
-      // Fail closed when the publish key is unset.
-      const publishKey = env.PUBLISH_KEY;
-      const auth = request.headers.get("Authorization") || "";
-      if (!publishKey || auth !== "Bearer " + publishKey) {
-        return jsonResponse({ error: "unauthorized" }, 401);
-      }
-      const text = await request.text();
-      if (text.length > MAX_PUBLISH_BYTES) return jsonResponse({ error: "too large" }, 413);
-      let body = null;
-      try {
-        body = JSON.parse(text);
-      } catch (error) {
-        return jsonResponse({ error: "invalid json" }, 400);
-      }
-      if (!body || typeof body !== "object") {
-        return jsonResponse({ error: "invalid body" }, 400);
-      }
-
-      let written = 0;
-      let skipped = 0;
-      let deleted = 0;
-
-      // Put a key only when the serialized value actually changed, so a
-      // no-op publish costs zero KV writes.
-      async function putIfChanged(key, value) {
-        const serialized = JSON.stringify(value);
-        const current = await kv.get(key);
-        if (current === serialized) {
-          skipped += 1;
-          return;
-        }
-        await kv.put(key, serialized);
-        written += 1;
-      }
-
-      if (body.sections && typeof body.sections === "object") {
-        for (const name of Object.keys(body.sections)) {
-          await putIfChanged("sec:" + name, body.sections[name]);
-        }
-      }
-      if (Array.isArray(body.fsFolders)) {
-        for (const folder of body.fsFolders) {
-          if (!folder || typeof folder.path !== "string") continue;
-          await putIfChanged("fsdir:" + folder.path, {
-            stamp: folder.stamp,
-            children: folder.children,
-          });
-        }
-      }
-      if (Array.isArray(body.fsDeleted)) {
-        for (const dirPath of body.fsDeleted) {
-          if (typeof dirPath !== "string") continue;
-          await kv.delete("fsdir:" + dirPath);
-          deleted += 1;
-        }
-      }
-      if (Array.isArray(body.prefBodies)) {
-        for (const item of body.prefBodies) {
-          if (!item || item.id == null) continue;
-          await putIfChanged("prefbody:" + String(item.id), {
-            name: item.name,
-            path: item.path,
-            body: item.body,
-          });
-        }
-      }
-
-      return jsonResponse({ written: written, skipped: skipped, deleted: deleted });
-    }
-
     if (isApi) return jsonResponse({ error: "not found" }, 404);
 
     // --- Static files ---------------------------------------------------------
@@ -209,3 +143,80 @@ export default {
     return env.ASSETS.fetch(new Request(assetUrl.toString(), request));
   },
 };
+
+// Publisher intake. This route is dispatched BEFORE the hub gate on
+// purpose: the VM publisher connects directly to this project and
+// authenticates with its own Bearer key (env.PUBLISH_KEY) — it never
+// carries the hub proxy key. Fail closed when the key is unset.
+async function handlePublish(request, env) {
+  const kv = env.MUSESTATUS_DATA;
+
+  // Fail closed when the publish key is unset.
+  const publishKey = env.PUBLISH_KEY;
+  const auth = request.headers.get("Authorization") || "";
+  if (!publishKey || auth !== "Bearer " + publishKey) {
+    return jsonResponse({ error: "unauthorized" }, 401);
+  }
+  const text = await request.text();
+  if (text.length > MAX_PUBLISH_BYTES) return jsonResponse({ error: "too large" }, 413);
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch (error) {
+    return jsonResponse({ error: "invalid json" }, 400);
+  }
+  if (!body || typeof body !== "object") {
+    return jsonResponse({ error: "invalid body" }, 400);
+  }
+
+  let written = 0;
+  let skipped = 0;
+  let deleted = 0;
+
+  // Put a key only when the serialized value actually changed, so a
+  // no-op publish costs zero KV writes.
+  async function putIfChanged(key, value) {
+    const serialized = JSON.stringify(value);
+    const current = await kv.get(key);
+    if (current === serialized) {
+      skipped += 1;
+      return;
+    }
+    await kv.put(key, serialized);
+    written += 1;
+  }
+
+  if (body.sections && typeof body.sections === "object") {
+    for (const name of Object.keys(body.sections)) {
+      await putIfChanged("sec:" + name, body.sections[name]);
+    }
+  }
+  if (Array.isArray(body.fsFolders)) {
+    for (const folder of body.fsFolders) {
+      if (!folder || typeof folder.path !== "string") continue;
+      await putIfChanged("fsdir:" + folder.path, {
+        stamp: folder.stamp,
+        children: folder.children,
+      });
+    }
+  }
+  if (Array.isArray(body.fsDeleted)) {
+    for (const dirPath of body.fsDeleted) {
+      if (typeof dirPath !== "string") continue;
+      await kv.delete("fsdir:" + dirPath);
+      deleted += 1;
+    }
+  }
+  if (Array.isArray(body.prefBodies)) {
+    for (const item of body.prefBodies) {
+      if (!item || item.id == null) continue;
+      await putIfChanged("prefbody:" + String(item.id), {
+        name: item.name,
+        path: item.path,
+        body: item.body,
+      });
+    }
+  }
+
+  return jsonResponse({ written: written, skipped: skipped, deleted: deleted });
+}
