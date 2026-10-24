@@ -13,20 +13,30 @@ function check(name, condition, extra) {
 }
 
 // --- In-memory D1 stub -------------------------------------------------------
-// Implements just the SQL surface the worker uses: CREATE TABLE (no-op),
-// single-row lookups, IN(...) lookups, upserts and deletes, over Maps.
+// Implements just the SQL surface the worker uses: schema checks, CREATE /
+// DROP TABLE, single-row lookups, IN(...) hash lookups, upserts and
+// deletes, over Maps.
 function makeDb() {
   const tables = {
     musestatus_sections: new Map(),
-    musestatus_fs: new Map(),
-    musestatus_pref_bodies: new Map(),
+    musestatus_chunks: new Map(),
     musestatus_view_state: new Map(),
   };
 
   function runStatement(sql, params) {
     const text = sql.replace(/\s+/g, " ").trim();
+    let match = text.match(/^SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'musestatus_sections'$/);
+    if (match) {
+      // Pretend the v2 (hashed) schema already exists.
+      return { first: { sql: "CREATE TABLE musestatus_sections (name TEXT PRIMARY KEY, hash TEXT NOT NULL)" }, results: [] };
+    }
+    if (text.startsWith("DROP TABLE")) {
+      const name = text.replace("DROP TABLE IF EXISTS ", "").trim();
+      if (tables[name]) tables[name].clear();
+      return { results: [] };
+    }
     if (text.startsWith("CREATE TABLE")) return { results: [] };
-    let match = text.match(/^SELECT body FROM musestatus_view_state WHERE id = 1$/);
+    match = text.match(/^SELECT body FROM musestatus_view_state WHERE id = 1$/);
     if (match) {
       const row = tables.musestatus_view_state.get(1);
       return { first: row || null, results: row ? [row] : [] };
@@ -36,22 +46,20 @@ function makeDb() {
       tables.musestatus_view_state.set(1, { id: 1, body: params[0] });
       return { results: [] };
     }
-    match = text.match(/^SELECT name, stamp, data FROM musestatus_sections$/);
+    match = text.match(/^SELECT name, stamp, payload FROM musestatus_sections$/);
     if (match) return { results: [...tables.musestatus_sections.values()] };
-    match = text.match(/^SELECT stamp, children FROM musestatus_fs WHERE path = \?$/);
+    match = text.match(/^SELECT payload FROM musestatus_chunks WHERE chunk_id = \?$/);
     if (match) {
-      const row = tables.musestatus_fs.get(params[0]);
+      const row = tables.musestatus_chunks.get(params[0]);
       return { first: row || null, results: row ? [row] : [] };
     }
-    match = text.match(/^SELECT name, path, body FROM musestatus_pref_bodies WHERE id = \?$/);
-    if (match) {
-      const row = tables.musestatus_pref_bodies.get(params[0]);
-      return { first: row || null, results: row ? [row] : [] };
-    }
-    match = text.match(/^SELECT (.+) FROM (musestatus_\w+) WHERE (\w+) IN \(/);
+    match = text.match(/^SELECT (\w+), hash FROM (musestatus_\w+) WHERE \1 IN \(/);
     if (match) {
       const table = tables[match[2]];
-      const rows = params.map((key) => table.get(String(key))).filter(Boolean);
+      const rows = params
+        .map((key) => table.get(String(key)))
+        .filter(Boolean)
+        .map((row) => ({ [match[1]]: row[match[1]], hash: row.hash }));
       return { results: rows };
     }
     match = text.match(/^INSERT INTO (musestatus_\w+) \(([^)]+)\) VALUES/);
@@ -63,9 +71,9 @@ function makeDb() {
       table.set(String(params[0]), row);
       return { results: [] };
     }
-    match = text.match(/^DELETE FROM musestatus_fs WHERE path = \?$/);
+    match = text.match(/^DELETE FROM musestatus_chunks WHERE chunk_id = \?$/);
     if (match) {
-      tables.musestatus_fs.delete(params[0]);
+      tables.musestatus_chunks.delete(params[0]);
       return { results: [] };
     }
     throw new Error("fake D1 does not understand SQL: " + text);
@@ -148,23 +156,33 @@ const env = makeEnv(db);
   const res2 = await worker.fetch(req("/api/publish", { method: "POST", headers: { Authorization: "Bearer nope" }, body: "{}" }), env);
   check("publish 401 with wrong bearer", res2.status === 401);
 }
-// 6. Publish: a full payload writes sections, folders and bodies; a repeat is all skips.
+// 6. Publish: a full payload writes sections, fs chunks and bodies behind
+// the hash gate; a repeat publish of the same hashes writes zero rows.
 {
   const payload = {
     sections: {
-      machines: { stamp: 1700000000000, data: { cols: ["Label"], rows: [["Geekom"]] } },
-      fsmeta: { stamp: 1700000000000, data: { root: "/home/hatch", totalFiles: 3 } },
+      machines: { stamp: 1700000000000, hash: "hash-machines", data: { cols: ["Label"], rows: [["Geekom"]] } },
+      fsmeta: { stamp: 1700000000000, hash: "hash-fsmeta", data: { root: "/home/hatch", totalFiles: 3 } },
     },
-    fsFolders: [{ path: "/home/hatch", stamp: 1700000000000, children: [{ n: "a.txt", d: false, s: 10, m: 1700000000000 }] }],
-    prefBodies: [{ id: "f1", name: "MEMORY.md", path: "/home/hatch/MEMORY.md", body: "hello" }],
+    fsChunks: [
+      { id: "fs:manifest", hash: "hash-manifest", payload: { "/home/hatch": "fs:00000" } },
+      { id: "fs:00000", hash: "hash-chunk0", payload: { "/home/hatch": { stamp: 1700000000000, children: [{ n: "a.txt", d: false, s: 10, m: 1700000000000 }] } } },
+    ],
+    prefBodies: [{ id: "f1", hash: "hash-body1", name: "MEMORY.md", path: "/home/hatch/MEMORY.md", body: "hello" }],
   };
   const init = { method: "POST", headers: { Authorization: "Bearer publish-key-456", "content-type": "application/json" }, body: JSON.stringify(payload) };
   const res = await worker.fetch(req("/api/publish", init), env);
   const body = await res.json();
-  check("publish writes 4 rows", res.status === 200 && body.written === 4 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
+  check("publish writes 5 rows", res.status === 200 && body.written === 5 && body.skipped === 0 && body.deleted === 0, JSON.stringify(body));
   const res2 = await worker.fetch(req("/api/publish", init), env);
   const body2 = await res2.json();
-  check("publish repeat skips unchanged", body2.written === 0 && body2.skipped === 4, JSON.stringify(body2));
+  check("publish repeat skips all (hash gate)", body2.written === 0 && body2.skipped === 5, JSON.stringify(body2));
+  // A changed hash writes exactly that one row.
+  const changed = JSON.parse(JSON.stringify(payload));
+  changed.sections.machines = { stamp: 1700000001000, hash: "hash-machines-2", data: { cols: ["Label"], rows: [["Omnist"]] } };
+  const res3 = await worker.fetch(req("/api/publish", { ...init, body: JSON.stringify(changed) }), env);
+  const body3 = await res3.json();
+  check("publish changed hash writes 1 row", body3.written === 1 && body3.skipped === 4, JSON.stringify(body3));
 }
 // 7. Prefs roundtrip: empty is "null", PUT stores, GET returns it.
 {
@@ -182,10 +200,10 @@ const env = makeEnv(db);
 {
   const res = await worker.fetch(req("/api/data", { headers: GATE }), env);
   const body = await res.json();
-  check("data assembles sections", body.sections && body.sections.machines && body.sections.machines.data.rows[0][0] === "Geekom" && body.sections.fsmeta.data.root === "/home/hatch", JSON.stringify(Object.keys(body.sections || {})));
+  check("data assembles sections", body.sections && body.sections.machines && body.sections.machines.data.rows[0][0] === "Omnist" && body.sections.fsmeta.data.root === "/home/hatch", JSON.stringify(Object.keys(body.sections || {})));
   check("data is no-store", (res.headers.get("cache-control") || "").includes("no-store"));
 }
-// 9. FS get: known folder returns children, unknown is a 404 JSON.
+// 9. FS get: folder resolves through manifest + chunk; unknown is a 404.
 {
   const res = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/home/hatch"), { headers: GATE }), env);
   const body = await res.json();
@@ -193,7 +211,7 @@ const env = makeEnv(db);
   const res2 = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/nope"), { headers: GATE }), env);
   check("fs get 404 when absent", res2.status === 404, "status=" + res2.status);
 }
-// 10. Prefbody get + publish delete path.
+// 10. Prefbody get + chunk delete path.
 {
   const res = await worker.fetch(req("/api/prefbody?id=f1", { headers: GATE }), env);
   const body = await res.json();
@@ -201,12 +219,12 @@ const env = makeEnv(db);
   const del = await worker.fetch(req("/api/publish", {
     method: "POST",
     headers: { Authorization: "Bearer publish-key-456", "content-type": "application/json" },
-    body: JSON.stringify({ fsDeleted: ["/home/hatch"] }),
+    body: JSON.stringify({ fsChunksDeleted: ["fs:00000"] }),
   }), env);
   const delBody = await del.json();
-  check("publish deletes fs rows", delBody.deleted === 1, JSON.stringify(delBody));
+  check("publish deletes chunk rows", delBody.deleted === 1, JSON.stringify(delBody));
   const res2 = await worker.fetch(req("/api/fs?path=" + encodeURIComponent("/home/hatch"), { headers: GATE }), env);
-  check("fs get 404 after delete", res2.status === 404);
+  check("fs get 404 after chunk delete", res2.status === 404);
 }
 
 console.log(failures ? "\n" + failures + " failure(s)" : "\nAll tests passed");
