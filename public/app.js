@@ -48,6 +48,7 @@ const STORAGE_KEY = "musestatus-view";
 const DEFAULT_STATE = {
   theme: null,
   verbose: false,
+  instantTooltips: false, // false: custom tooltips wait 0.2s; true: show at once
   editing: false,
   spacing: { fontSize: 12, cellPad: 1, subheadGap: 6 },
   tableScale: 100,
@@ -63,8 +64,20 @@ const DEFAULT_STATE = {
   tables: {}, // pane id -> { columnOrder, columnWidths, sort, widthMode, wrap, rowOrder, cells, scale }
   stars: [], // artifact slugs starred inside this app
   shortcuts: {}, // shortcut task id -> key string, or null when unassigned
+  shortcutStockMigrated: false, // one-time K -> S stock migration (v1.1.1) applied
 };
 let state = loadState();
+// One-time migration (v1.1.1): the Shortcuts task's stock key moved from K
+// to S. A saved override still pinning the old stock "k" follows the move —
+// dropping the override lands on the new stock — while any other saved value
+// is a deliberate customization and stays. Marked in the state so it runs
+// exactly once, whichever store (local or synced) the state came from.
+function migrateShortcutStock() {
+  if (state.shortcutStockMigrated) return false;
+  state.shortcutStockMigrated = true;
+  if (state.shortcuts && state.shortcuts.shortcuts === "k") delete state.shortcuts.shortcuts;
+  return true;
+}
 
 function loadState() {
   try {
@@ -104,8 +117,11 @@ function pullPrefs() {
       state.spacing = Object.assign({}, DEFAULT_STATE.spacing, saved.spacing || {});
       state.shortcuts = Object.assign({}, saved.shortcuts || {});
       if (!Array.isArray(state.stars)) state.stars = [];
-      lastSyncedJson = JSON.stringify(state);
-      try { localStorage.setItem(STORAGE_KEY, lastSyncedJson); } catch (error) { /* storage blocked */ }
+      const receivedJson = JSON.stringify(state);
+      migrateShortcutStock();
+      lastSyncedJson = receivedJson;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (error) { /* storage blocked */ }
+      if (JSON.stringify(state) !== receivedJson) pushPrefs();
       render();
     })
     .catch(() => { /* keep the local copy */ });
@@ -123,6 +139,9 @@ function columnWidth(model, column) {
   return Math.max(24, Math.round(base * table.scale * state.tableScale / 100));
 }
 function update(change) { change(); saveState(); render(); }
+// Apply the K -> S migration to the locally loaded state (the synced copy
+// gets the same pass in pullPrefs); saveState persists the marker.
+if (migrateShortcutStock()) saveState();
 
 // ---------------------------------------------------------------------------
 // Published data
@@ -1011,7 +1030,7 @@ const SHORTCUT_TASKS = [
   { id: "panes", label: "Toggle Panes panel", stockKey: "p" },
   { id: "changelog", label: "Open Changelog", stockKey: "l" },
   { id: "history", label: "Open Code history", stockKey: "h" },
-  { id: "shortcuts", label: "Open Shortcuts", stockKey: "k" },
+  { id: "shortcuts", label: "Toggle Shortcuts", stockKey: "s" },
 ];
 function shortcutKey(taskId) {
   if (Object.prototype.hasOwnProperty.call(state.shortcuts, taskId)) return state.shortcuts[taskId];
@@ -1052,7 +1071,7 @@ function runShortcut(taskId) {
   else if (taskId === "panes") update(() => { state.panesPanelOpen = !state.panesPanelOpen; });
   else if (taskId === "changelog") window.location.href = "changelog.html";
   else if (taskId === "history") window.location.href = "code-history.html";
-  else if (taskId === "shortcuts") openShortcuts();
+  else if (taskId === "shortcuts") toggleShortcuts();
 }
 function shortcutsTipHtml() {
   return SHORTCUT_TASKS.map((task) => formatKey(shortcutKey(task.id)) + " — " + task.label).join("<br>");
@@ -1064,6 +1083,16 @@ let captureCtrlArmed = false; // bare Ctrl seen during capture, awaiting keyup
 function openShortcuts() {
   closeMenu();
   renderShortcuts();
+}
+function shortcutsIsOpen() {
+  const host = document.getElementById("shortcutsHost");
+  return !!host && host.innerHTML !== "";
+}
+function toggleShortcuts() {
+  // The Shortcuts key toggles its own popup. A key capture in progress never
+  // reaches here — the keydown handler routes it to the capture first.
+  if (shortcutsIsOpen()) closeShortcuts();
+  else openShortcuts();
 }
 function closeShortcuts() {
   const host = document.getElementById("shortcutsHost");
@@ -1141,6 +1170,7 @@ function openMenu() {
     + '<a class="item" href="code-history.html">Code history ' + keyHint("history") + '</a><hr>'
     + '<label class="item">Edit mode ' + keyHint("edit") + '<input type="checkbox" id="editToggle"' + (state.editing ? " checked" : "") + "></label>"
     + '<label class="item">Verbose <input type="checkbox" id="verboseToggle"' + (state.verbose ? " checked" : "") + "></label>"
+    + '<label class="item">Instant tooltips <input type="checkbox" id="instantTooltipsToggle"' + (state.instantTooltips ? " checked" : "") + "></label>"
     + '<label class="item">Wrap text ' + keyHint("wrap") + '<input type="checkbox" id="wrapToggle"' + (state.wrapAll ? " checked" : "") + "></label>"
     + '<label class="item">Left task pane ' + keyHint("dock") + '<input type="checkbox" id="dockToggle"' + (state.panesDocked && state.panesPanelOpen ? " checked" : "") + "></label><hr>"
     + '<span class="btn-tip-host"><button class="item" data-menu="shortcuts">Shortcuts ' + keyHint("shortcuts") + '</button><span class="btn-tip">' + shortcutsTipHtml() + "</span></span>"
@@ -1387,6 +1417,7 @@ document.addEventListener("click", (event) => {
 document.addEventListener("change", (event) => {
   if (event.target.id === "editToggle") update(() => { state.editing = event.target.checked; });
   if (event.target.id === "verboseToggle") update(() => { state.verbose = event.target.checked; });
+  if (event.target.id === "instantTooltipsToggle") update(() => { state.instantTooltips = event.target.checked; });
   if (event.target.id === "wrapToggle") update(() => { state.wrapAll = event.target.checked; });
   if (event.target.id === "dockToggle") toggleLeftTaskPane();
   const fsSelect = event.target.closest && event.target.closest("[data-fs-level]");
@@ -1504,19 +1535,68 @@ document.addEventListener("dblclick", (event) => {
 });
 
 // ---------------------------------------------------------------------------
-// Instant tooltip for clipped text
+// Custom tooltips — one shared show path for the .btn-tip helper (the
+// Shortcuts button's assignment list) and the clipped-text tip below. The
+// burger menu's "Instant tooltips" toggle picks the timing: off (default)
+// a tooltip appears only after a 0.2s hover, on it appears immediately.
+// Leaving the hover target before the timer fires cancels the show.
 // ---------------------------------------------------------------------------
-const tooltip = document.getElementById("tip");
+const TOOLTIP_DELAY_MS = 200;
+function tooltipDelay() { return state.instantTooltips ? 0 : TOOLTIP_DELAY_MS; }
+
+// The .btn-tip helper: CSS shows the tip only while its host carries
+// .tip-open; this driver arms the shared timer on hover.
+let btnTipTimer = null;
+let btnTipPending = null;
+function clearBtnTip() {
+  clearTimeout(btnTipTimer);
+  btnTipTimer = null;
+  btnTipPending = null;
+  document.querySelectorAll(".btn-tip-host.tip-open").forEach((el) => el.classList.remove("tip-open"));
+}
 document.addEventListener("mouseover", (event) => {
-  const cell = event.target.closest("td, th");
-  if (!cell || cell.querySelector("input") || cell.scrollWidth <= cell.clientWidth) { tooltip.hidden = true; return; }
+  const host = event.target.closest && event.target.closest(".btn-tip-host");
+  if (host && (host === btnTipPending || host.classList.contains("tip-open"))) return;
+  clearBtnTip();
+  if (!host) return;
+  btnTipPending = host;
+  const delay = tooltipDelay();
+  if (delay === 0) { btnTipPending = null; host.classList.add("tip-open"); return; }
+  btnTipTimer = setTimeout(() => {
+    btnTipTimer = null;
+    btnTipPending = null;
+    host.classList.add("tip-open");
+  }, delay);
+});
+
+// Tooltip for clipped text (a cell whose content overflows its box).
+const tooltip = document.getElementById("tip");
+let tipTimer = null;
+let tipCell = null;
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipTimer = null;
+  tipCell = null;
+  tooltip.hidden = true;
+}
+function showTip(cell) {
   tooltip.textContent = cell.textContent.replace(/[✎✕↺⠿★☆]/g, "").trim();
   const box = cell.getBoundingClientRect();
   tooltip.hidden = false;
   tooltip.style.left = Math.min(box.left, innerWidth - tooltip.offsetWidth - 16) + "px";
   tooltip.style.top = (box.bottom + 3) + "px";
+}
+document.addEventListener("mouseover", (event) => {
+  const cell = event.target.closest("td, th");
+  if (!cell || cell.querySelector("input") || cell.scrollWidth <= cell.clientWidth) { hideTip(); return; }
+  if (cell === tipCell) return; // already shown for, or counting down to, this cell
+  hideTip();
+  tipCell = cell;
+  const delay = tooltipDelay();
+  if (delay === 0) { showTip(cell); return; }
+  tipTimer = setTimeout(() => { tipTimer = null; if (tipCell === cell) showTip(cell); }, delay);
 });
-document.addEventListener("scroll", () => { tooltip.hidden = true; }, { passive: true });
+document.addEventListener("scroll", hideTip, { passive: true });
 
 // ---------------------------------------------------------------------------
 // Column resize

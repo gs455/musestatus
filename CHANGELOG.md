@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.1.1 — 2026-10-28
+
+- Shortcuts: the Shortcuts popup's stock key moves from K to S (mirroring /artifacts) and becomes a toggle — S opens the popup, S again closes it; Esc still closes it as before, and a key capture in progress still wins over the toggle. K is freed. Saved view state migrates once on load: an override still pinning the old stock "k" is dropped so the task lands on the new stock S, while any customized key is left untouched (marked via `shortcutStockMigrated` in the synced state).
+- New burger-menu toggle "Instant tooltips" (off by default, persisted in the synced view state): off, the page's custom tooltips — the Shortcuts button's assignment list and the clipped-text cell tip — appear after a 0.2s hover; on, they appear instantly as before. Both go through one shared timer-based show path in app.js (leaving the hover target before the timer fires cancels the show); the .btn-tip helper is now shown via a `.tip-open` class instead of a CSS `:hover` rule.
+
 ## v1.1.0 — 2026-10-28
 
 - Ten new panes, tinted green with a NEW chip for this release: Plugins (adapted) — Muse's connector/skill bundles; Claude Code versions per machine (SSH probes on deep runs, highest found = latest); Local setup (this VM's MCP servers, Claude Code config, instruction files); Recent activity (latest question per chat); GitHub repos (latest commit + author, via gh); Cloudflare Pages (all projects, hub path + slot, latest deploy); Disk usage (largest home folders from the walk, share rendered as a bar); CLI versions; Workflows & playbooks (saved workflows honestly none on disk, plus the custom-skill playbooks); Collector error log (hook-log failures + the publisher's own new run log). The publisher (`~/workspace/muse-status-app/publish.py`, not in this repo) gained the ten collectors — three light, seven deep — and the file walk now tracks per-directory byte sizes.

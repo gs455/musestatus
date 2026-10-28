@@ -2,7 +2,7 @@
 
 musestatus: one dense page showing the state of Arman's Muse setup itself — starred & pinned artifacts, the VM file system, the preference files and their change timeline, machines, connectors, usage ledgers, automations, skills, tools, chats, artifacts and memory. A sibling of claudestatus (which covers the Claude account); this one covers Muse.
 
-Current version: **v1.1.0** (2026-10-28) — see [CHANGELOG.md](CHANGELOG.md). v1.1.0 adds ten panes (plugins, Claude Code versions, local setup, recent activity, GitHub repos, Cloudflare Pages, disk usage, CLI versions, workflows, collector error log), docs-style changelog + generated code-history pages, and an assignable shortcuts system.
+Current version: **v1.1.1** (2026-10-28) — see [CHANGELOG.md](CHANGELOG.md). v1.1.1 moves the Shortcuts popup's stock key from K to S and makes it a toggle (S opens, S again closes; a saved override still pinning the old stock K follows the move once, custom keys untouched), and adds a burger-menu "Instant tooltips" toggle (off by default: custom tooltips wait 0.2s; on: instant). v1.1.0 adds ten panes (plugins, Claude Code versions, local setup, recent activity, GitHub repos, Cloudflare Pages, disk usage, CLI versions, workflows, collector error log), docs-style changelog + generated code-history pages, and an assignable shortcuts system.
 
 Served at **https://armanai.pages.dev/musestatus/** behind the hub sign-in. Never link to the `*.pages.dev` address directly.
 

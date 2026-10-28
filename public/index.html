@@ -174,12 +174,13 @@ tr.group-row td { background: var(--thbg); font-weight: 650; color: var(--text);
 .sharebar { display: inline-block; width: 64px; height: 7px; background: var(--idle-bg); border-radius: 3px; overflow: hidden; vertical-align: -1px; margin-right: 6px; }
 .sharebar-fill { display: block; height: 100%; background: var(--good); border-radius: 3px; }
 
-/* Instant tooltip on the menu's Shortcuts button (hub .btn-tip pattern:
-   shown on hover with no native title delay) */
+/* Tooltip on the menu's Shortcuts button (hub .btn-tip pattern). app.js
+   adds .tip-open to the host through the shared tooltip show path, so the
+   burger menu's "Instant tooltips" toggle controls its timing. */
 .btn-tip-host { position: relative; display: block; }
 .btn-tip-host > .item { width: 100%; }
 .btn-tip { display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 50; min-width: 230px; background: var(--menu); color: var(--text); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow); padding: 5px 8px; font-size: 11px; line-height: 1.5; pointer-events: none; }
-.btn-tip-host:hover .btn-tip { display: block; }
+.btn-tip-host.tip-open .btn-tip { display: block; }
 
 /* Shortcuts dialog */
 .sc-overlay { position: fixed; inset: 0; z-index: 80; background: rgba(10, 14, 20, 0.45); display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px 16px; }
