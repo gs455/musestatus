@@ -5,7 +5,7 @@
 //
 // The page itself holds no account data. On load it paints the saved layout
 // from localStorage, then fetches api/data (snapshots the VM publisher cron
-// pushed into KV) and renders each section into its pane. Every pane header
+// pushed into D1) and renders each section into its pane. Every pane header
 // carries its own section stamp, so a stale number always says how stale.
 // View state (layout, labels, widths, stars, theme) is kept in this browser
 // for an instant first paint and synced through api/prefs, exactly like
@@ -27,6 +27,16 @@ const PANE_DEFS = [
   { id: "chats", title: "Assistants & chats", description: "Chats and their question counts.", section: "chats" },
   { id: "artifacts", title: "Artifacts & hub", description: "The Muse artifact catalog and the Artifacts app registry. Star rows here to pin them into the Starred pane.", custom: "artifacts" },
   { id: "memory", title: "Memory", description: "The memory stores behind this page.", section: "memory" },
+  { id: "plugins", title: "Plugins (adapted)", description: "Muse's bundles: connectors, skill libraries and Claude Code.", section: "plugins" },
+  { id: "claude-code-versions", title: "Claude Code versions", description: "The Claude Code version on each machine, probed over SSH on deep publisher runs.", section: "claude-code-versions" },
+  { id: "local-setup", title: "Local setup", description: "This VM's own configuration: MCP servers, Claude Code config, instruction files.", section: "local-setup" },
+  { id: "recent-activity", title: "Recent activity", description: "The latest question asked in each chat.", section: "recent-activity" },
+  { id: "github-repos", title: "GitHub repos", description: "Arman's GitHub repositories and their latest commits.", section: "github-repos" },
+  { id: "cloudflare-pages", title: "Cloudflare Pages", description: "Pages projects, their hub paths and latest deployments.", section: "cloudflare-pages" },
+  { id: "disk-usage", title: "Disk usage", description: "The largest folders directly under /home/hatch, from the publisher's file walk.", section: "disk-usage" },
+  { id: "cli-versions", title: "CLI versions", description: "Versions of the command-line tools this VM's work leans on.", section: "cli-versions" },
+  { id: "workflows", title: "Workflows & playbooks", description: "Saved workflows and the custom-skill playbooks.", section: "workflows" },
+  { id: "error-log", title: "Collector error log", description: "Failures recorded by Mo's own collector and publish jobs.", section: "error-log" },
 ];
 
 const ARTIFACTS_BASE = "https://armanai.pages.dev/artifacts/";
@@ -52,6 +62,7 @@ const DEFAULT_STATE = {
   labels: {}, // label key -> new text, or null when hidden
   tables: {}, // pane id -> { columnOrder, columnWidths, sort, widthMode, wrap, rowOrder, cells, scale }
   stars: [], // artifact slugs starred inside this app
+  shortcuts: {}, // shortcut task id -> key string, or null when unassigned
 };
 let state = loadState();
 
@@ -61,6 +72,7 @@ function loadState() {
     if (saved) {
       const merged = Object.assign(structuredClone(DEFAULT_STATE), saved);
       merged.spacing = Object.assign({}, DEFAULT_STATE.spacing, saved.spacing || {});
+      merged.shortcuts = Object.assign({}, saved.shortcuts || {});
       if (!Array.isArray(merged.stars)) merged.stars = [];
       return merged;
     }
@@ -90,6 +102,7 @@ function pullPrefs() {
       if (!saved || !saved.paneOrder) return;
       state = Object.assign(structuredClone(DEFAULT_STATE), saved);
       state.spacing = Object.assign({}, DEFAULT_STATE.spacing, saved.spacing || {});
+      state.shortcuts = Object.assign({}, saved.shortcuts || {});
       if (!Array.isArray(state.stars)) state.stars = [];
       lastSyncedJson = JSON.stringify(state);
       try { localStorage.setItem(STORAGE_KEY, lastSyncedJson); } catch (error) { /* storage blocked */ }
@@ -216,13 +229,15 @@ function slugify(text, index) {
 function chipToneFor(paneId, columnTitle, value) {
   const text = String(value || "");
   if (paneId === "connectors" || /status/i.test(columnTitle)) {
-    if (/^connected/i.test(text) || /^verified/i.test(text)) return "good";
-    if (/not connected/i.test(text)) return "bad";
+    if (/^connected/i.test(text) || /^verified/i.test(text) || /^latest/i.test(text)) return "good";
+    if (/^behind/i.test(text)) return "warn";
+    if (/^unreachable/i.test(text) || /not connected/i.test(text)) return "bad";
     return "idle";
   }
   if (/state/i.test(columnTitle)) {
-    if (/^enabled/i.test(text) || /^working/i.test(text)) return "good";
-    if (/^disabled/i.test(text)) return "idle";
+    if (/^enabled/i.test(text) || /^working/i.test(text) || /^present/i.test(text) || /^configured/i.test(text)) return "good";
+    if (/^missing/i.test(text)) return "bad";
+    if (/^disabled/i.test(text) || /^\d/.test(text)) return "idle";
     return "warn";
   }
   if (paneId === "skills" && /where/i.test(columnTitle)) {
@@ -243,12 +258,14 @@ function genericModel(def) {
     let width = 180;
     if (index === 0) width = 220;
     if (/questions|count|size/i.test(title)) width = 100;
-    if (/what|access|scope|detail|note|covers/i.test(title)) width = 380;
+    if (/share/i.test(title)) width = 140;
+    if (/what|access|scope|detail|note|covers|purpose/i.test(title)) width = 380;
     return {
       id: slugify(title, index),
       title: String(title),
       width: width,
       type: isChipColumn(def.id, title) ? "chip" : (/questions|count/i.test(title) ? "num" : "text"),
+      bar: !!data.barColumn && String(title) === String(data.barColumn),
       index: index,
     };
   });
@@ -257,7 +274,7 @@ function genericModel(def) {
     columns.forEach((column) => { row[column.id] = cells[column.index]; });
     return row;
   });
-  return { id: def.id, title: def.title, columns: columns, rows: rows, note: data.note || "" };
+  return { id: def.id, title: def.title, columns: columns, rows: rows, note: data.note || "", isNew: data.isNew === true };
 }
 function orderedColumns(model) {
   const order = tableState(model.id).columnOrder;
@@ -282,6 +299,12 @@ function orderedRows(model) {
 function genericCellInner(model, column, row) {
   const value = cellValue(model, row, column.id);
   if (value === "" || value == null) return "";
+  if (column.bar) {
+    // A percent value rendered as a small bar plus the number (disk usage).
+    const percent = Math.max(0, Math.min(100, Number(value) || 0));
+    return '<span class="sharebar"><span class="sharebar-fill" style="width:' + percent + '%"></span></span>'
+      + escapeHtml(value) + "%";
+  }
   if (column.type === "chip") {
     return '<span class="chip ' + chipToneFor(model.id, column.title, value) + '">' + escapeHtml(value) + "</span>";
   }
@@ -758,10 +781,13 @@ function paneHtml(def) {
   const paneWidth = isCurrent ? (def.custom ? "100%" : "fit-content") : table.widthMode + "%";
   const stamp = paneStampValue(def);
   const count = paneCountText(def);
-  let html = '<section class="pane' + (collapsed ? " collapsed" : "") + '" data-pane="' + def.id + '" style="width:' + paneWidth + '">'
+  const paneData = def.custom ? null : sectionData(def.section);
+  const isNew = !!(paneData && paneData.isNew === true);
+  let html = '<section class="pane' + (collapsed ? " collapsed" : "") + (isNew ? " pane-new" : "") + '" data-pane="' + def.id + '" style="width:' + paneWidth + '">'
     + '<div class="panehead">'
     + '<button class="caret" data-collapse="' + def.id + '" aria-label="Collapse">' + (collapsed ? "▶" : "▼") + "</button>"
     + labelHtml("pane." + def.id, def.title, "panetitle")
+    + (isNew ? '<span class="chip new">NEW</span>' : "")
     + (count !== "" ? '<span class="count">' + escapeHtml(count) + "</span>" : "")
     + (stamp ? '<span class="panestamp">as of ' + escapeHtml(formatStamp(stamp)) + "</span>" : "")
     + '<span class="tools">'
@@ -970,6 +996,133 @@ document.addEventListener("pointerup", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shortcuts — assignable keys (artifacts / hubv2 model). Stock assignments
+// live in SHORTCUT_TASKS; overrides live in state.shortcuts and sync through
+// api/prefs like the rest of the view state. A key already in use is flagged
+// in the dialog, never silently taken from its task.
+// ---------------------------------------------------------------------------
+const SHORTCUT_TASKS = [
+  { id: "edit", label: "Toggle edit mode", stockKey: "e" },
+  { id: "menu", label: "Toggle burger menu", stockKey: "ctrl" },
+  { id: "expand", label: "Toggle expand / collapse all panes", stockKey: "a" },
+  { id: "dock", label: "Toggle left task pane", stockKey: "b" },
+  { id: "wrap", label: "Toggle text wrap (all tables)", stockKey: "w" },
+  { id: "theme", label: "Toggle theme", stockKey: "t" },
+  { id: "panes", label: "Toggle Panes panel", stockKey: "p" },
+  { id: "changelog", label: "Open Changelog", stockKey: "l" },
+  { id: "history", label: "Open Code history", stockKey: "h" },
+  { id: "shortcuts", label: "Open Shortcuts", stockKey: "k" },
+];
+function shortcutKey(taskId) {
+  if (Object.prototype.hasOwnProperty.call(state.shortcuts, taskId)) return state.shortcuts[taskId];
+  const task = SHORTCUT_TASKS.find((candidate) => candidate.id === taskId);
+  return task ? task.stockKey : null;
+}
+function formatKey(key) {
+  if (!key) return "—";
+  return key.split("+").map((part) => {
+    if (part === "ctrl") return "Ctrl";
+    if (part === "space") return "Space";
+    return part.length === 1 ? part.toUpperCase() : part;
+  }).join("+");
+}
+function toggleTheme() {
+  const isDark = state.theme ? state.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  update(() => { state.theme = isDark ? "light" : "dark"; });
+}
+function toggleExpandCollapseAll() {
+  const allCollapsed = PANE_DEFS.every((pane) => state.collapsedPanes.includes(pane.id));
+  update(() => { state.collapsedPanes = allCollapsed ? [] : PANE_DEFS.map((pane) => pane.id); });
+}
+function toggleLeftTaskPane() {
+  // The Panes panel docked on the left: hide it if it is showing docked,
+  // otherwise dock it and show it.
+  update(() => {
+    if (state.panesDocked && state.panesPanelOpen) state.panesPanelOpen = false;
+    else { state.panesDocked = true; state.panesPanelOpen = true; }
+  });
+}
+function runShortcut(taskId) {
+  if (taskId === "edit") update(() => { state.editing = !state.editing; });
+  else if (taskId === "menu") openMenu();
+  else if (taskId === "expand") toggleExpandCollapseAll();
+  else if (taskId === "dock") toggleLeftTaskPane();
+  else if (taskId === "wrap") update(() => { state.wrapAll = !state.wrapAll; });
+  else if (taskId === "theme") toggleTheme();
+  else if (taskId === "panes") update(() => { state.panesPanelOpen = !state.panesPanelOpen; });
+  else if (taskId === "changelog") window.location.href = "changelog.html";
+  else if (taskId === "history") window.location.href = "code-history.html";
+  else if (taskId === "shortcuts") openShortcuts();
+}
+function shortcutsTipHtml() {
+  return SHORTCUT_TASKS.map((task) => formatKey(shortcutKey(task.id)) + " — " + task.label).join("<br>");
+}
+
+let shortcutCapture = null;   // task id currently capturing a key, if any
+let shortcutConflict = null;  // { a, b, key } when an assignment collides
+let captureCtrlArmed = false; // bare Ctrl seen during capture, awaiting keyup
+function openShortcuts() {
+  closeMenu();
+  renderShortcuts();
+}
+function closeShortcuts() {
+  const host = document.getElementById("shortcutsHost");
+  if (host) host.innerHTML = "";
+  shortcutCapture = null;
+  shortcutConflict = null;
+  captureCtrlArmed = false;
+}
+function renderShortcuts() {
+  const host = document.getElementById("shortcutsHost");
+  if (!host) return;
+  let rows = "";
+  SHORTCUT_TASKS.forEach((task) => {
+    const key = shortcutKey(task.id);
+    const isCustom = Object.prototype.hasOwnProperty.call(state.shortcuts, task.id);
+    const inConflict = shortcutConflict && (shortcutConflict.a === task.id || shortcutConflict.b === task.id);
+    const capturing = shortcutCapture === task.id;
+    rows += '<div class="sc-row' + (inConflict ? " conflict" : "") + '">'
+      + '<span class="sc-label">' + escapeHtml(task.label) + "</span>"
+      + '<button class="sc-key' + (capturing ? " capturing" : "") + '" data-sc-capture="' + task.id + '">'
+      + (capturing ? "Press a key…" : escapeHtml(formatKey(key))) + "</button>"
+      + (isCustom ? '<button class="sc-revert" data-sc-revert="' + task.id + '" title="Back to the stock key">↺</button>' : '<span class="sc-revert-slot"></span>')
+      + "</div>";
+  });
+  let note = "Click a key to reassign it. Backspace clears a key; Esc cancels a capture.";
+  if (shortcutConflict) {
+    const other = SHORTCUT_TASKS.find((task) => task.id === shortcutConflict.b);
+    note = formatKey(shortcutConflict.key) + " is already assigned to “" + (other ? other.label : "") + "” — pick another key.";
+  }
+  host.innerHTML = '<div class="sc-overlay" data-sc-overlay><div class="sc-window" role="dialog" aria-label="Shortcuts">'
+    + '<div class="sc-head"><span>Shortcuts</span><button class="sc-close" data-sc-close aria-label="Close">✕</button></div>'
+    + '<div class="sc-note' + (shortcutConflict ? " conflict" : "") + '">' + escapeHtml(note) + "</div>"
+    + rows
+    + '<div class="sc-foot"><button data-sc-reset>Reset all</button><button data-sc-close>Done</button></div>'
+    + "</div></div>";
+}
+function assignShortcut(taskId, key) {
+  if (key) {
+    const other = SHORTCUT_TASKS.find((task) => task.id !== taskId && shortcutKey(task.id) === key);
+    if (other) {
+      // Flag the collision in red; neither assignment changes.
+      shortcutConflict = { a: taskId, b: other.id, key: key };
+      shortcutCapture = null;
+      renderShortcuts();
+      return;
+    }
+  }
+  shortcutConflict = null;
+  shortcutCapture = null;
+  update(() => {
+    const task = SHORTCUT_TASKS.find((candidate) => candidate.id === taskId);
+    if (key === null) state.shortcuts[taskId] = null;
+    else if (task && key === task.stockKey) delete state.shortcuts[taskId];
+    else state.shortcuts[taskId] = key;
+  });
+  renderShortcuts();
+}
+
+// ---------------------------------------------------------------------------
 // Burger menu
 // ---------------------------------------------------------------------------
 function closeMenu() { document.getElementById("menuHost").innerHTML = ""; }
@@ -981,14 +1134,17 @@ function openMenu() {
   const host = document.getElementById("menuHost");
   if (host.innerHTML) { closeMenu(); return; }
   const hidden = state.hiddenPanes.map((id) => PANE_DEFS.find((pane) => pane.id === id)).filter(Boolean);
+  const keyHint = (taskId) => '<span class="kbd">' + escapeHtml(formatKey(shortcutKey(taskId))) + "</span>";
   let html = '<div class="menu" role="menu">'
-    + '<a class="item" href="changelog.html">Changelog</a>'
-    + '<a class="item" href="https://github.com/gs455/musestatus/commits/main" target="_blank" rel="noopener">Code history</a><hr>'
-    + '<label class="item">Edit mode <span class="kbd">Ctrl+E</span><input type="checkbox" id="editToggle"' + (state.editing ? " checked" : "") + "></label>"
+    + '<div class="h">History</div>'
+    + '<a class="item" href="changelog.html">Changelog ' + keyHint("changelog") + '</a>'
+    + '<a class="item" href="code-history.html">Code history ' + keyHint("history") + '</a><hr>'
+    + '<label class="item">Edit mode ' + keyHint("edit") + '<input type="checkbox" id="editToggle"' + (state.editing ? " checked" : "") + "></label>"
     + '<label class="item">Verbose <input type="checkbox" id="verboseToggle"' + (state.verbose ? " checked" : "") + "></label>"
-    + '<label class="item">Wrap text <input type="checkbox" id="wrapToggle"' + (state.wrapAll ? " checked" : "") + "></label>"
-    + '<label class="item">Panes as task pane <span class="kbd">Ctrl+B</span><input type="checkbox" id="dockToggle"' + (state.panesDocked ? " checked" : "") + "></label><hr>"
-    + '<button class="item" data-menu="collapse-all">Collapse all <span class="kbd">Ctrl+A</span></button>'
+    + '<label class="item">Wrap text ' + keyHint("wrap") + '<input type="checkbox" id="wrapToggle"' + (state.wrapAll ? " checked" : "") + "></label>"
+    + '<label class="item">Left task pane ' + keyHint("dock") + '<input type="checkbox" id="dockToggle"' + (state.panesDocked && state.panesPanelOpen ? " checked" : "") + "></label><hr>"
+    + '<span class="btn-tip-host"><button class="item" data-menu="shortcuts">Shortcuts ' + keyHint("shortcuts") + '</button><span class="btn-tip">' + shortcutsTipHtml() + "</span></span>"
+    + '<button class="item" data-menu="collapse-all">Collapse all ' + keyHint("expand") + '</button>'
     + '<button class="item" data-menu="expand-all">Expand all</button>';
   if (hidden.length) {
     html += '<div class="h">Hidden panes</div>';
@@ -1047,6 +1203,31 @@ document.addEventListener("click", (event) => {
   let match;
 
   if (suppressPanelClick) return;
+
+  // Shortcuts dialog
+  if ((match = target.closest("[data-sc-capture]"))) {
+    shortcutCapture = match.dataset.scCapture;
+    shortcutConflict = null;
+    captureCtrlArmed = false;
+    renderShortcuts();
+    return;
+  }
+  if ((match = target.closest("[data-sc-revert]"))) {
+    const taskId = match.dataset.scRevert;
+    shortcutConflict = null;
+    update(() => { delete state.shortcuts[taskId]; });
+    renderShortcuts();
+    return;
+  }
+  if (target.closest("[data-sc-reset]")) {
+    shortcutConflict = null;
+    update(() => { state.shortcuts = {}; });
+    renderShortcuts();
+    return;
+  }
+  if (target.closest("[data-sc-close]")) { closeShortcuts(); return; }
+  if (target.closest("[data-sc-overlay]") && !target.closest(".sc-window")) { closeShortcuts(); return; }
+
   if (target.closest("[data-panel-open]")) { update(() => { state.panesPanelOpen = true; }); return; }
   if (target.closest("#burgerButton")) { openMenu(); return; }
   if (target.closest("#panesButton")) { update(() => { state.panesPanelOpen = !state.panesPanelOpen; }); return; }
@@ -1073,6 +1254,7 @@ document.addEventListener("click", (event) => {
   }
   if ((match = target.closest("[data-menu]"))) {
     const action = match.dataset.menu;
+    if (action === "shortcuts") { openShortcuts(); return; }
     if (action === "collapse-all") update(() => { state.collapsedPanes = PANE_DEFS.map((pane) => pane.id); });
     if (action === "expand-all") update(() => { state.collapsedPanes = []; });
     if (action === "reset") update(() => {
@@ -1206,7 +1388,7 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "editToggle") update(() => { state.editing = event.target.checked; });
   if (event.target.id === "verboseToggle") update(() => { state.verbose = event.target.checked; });
   if (event.target.id === "wrapToggle") update(() => { state.wrapAll = event.target.checked; });
-  if (event.target.id === "dockToggle") update(() => { state.panesDocked = event.target.checked; });
+  if (event.target.id === "dockToggle") toggleLeftTaskPane();
   const fsSelect = event.target.closest && event.target.closest("[data-fs-level]");
   if (fsSelect) {
     const level = Number(fsSelect.dataset.fsLevel);
@@ -1235,20 +1417,90 @@ document.addEventListener("input", (event) => {
   saveState();
   render();
 });
-// Shortcuts: Ctrl+E edit mode, Ctrl+M menu, Ctrl+A collapse/expand all, Ctrl+B task pane vs floating.
+// ---------------------------------------------------------------------------
+// Keyboard: the assignable shortcuts. A bare Control keypress (pressed and
+// released with no other key in between) is itself an assignable key — it
+// arms on keydown and fires on keyup. Shortcuts never fire while typing in
+// an input, textarea, select or contenteditable, or during a key capture.
+// Alt is left alone entirely: Arman's Alt key drives his AutoHotkey layer.
+// ---------------------------------------------------------------------------
+let ctrlArmed = false;
+function isTypingTarget(target) {
+  return !!target && (target.isContentEditable
+    || /INPUT|TEXTAREA|SELECT/.test(target.tagName || ""));
+}
+function keyFromEvent(event) {
+  if (event.altKey) return null;
+  let key = event.key;
+  if (!key || key === "Control" || key === "Shift" || key === "Meta" || key === "Alt") return null;
+  if (key === " ") key = "space";
+  else key = key.toLowerCase();
+  if (event.ctrlKey || event.metaKey) return "ctrl+" + key;
+  if (event.shiftKey && key.length === 1) return "shift+" + key;
+  return key;
+}
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") { closeMenu(); return; }
-  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-  if (/INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
-  const key = event.key.toLowerCase();
-  if (key === "e") { event.preventDefault(); update(() => { state.editing = !state.editing; }); }
-  if (key === "m") { event.preventDefault(); openMenu(); }
-  if (key === "a") {
+  // Key capture for the Shortcuts dialog swallows the keypress.
+  if (shortcutCapture) {
     event.preventDefault();
-    const allCollapsed = PANE_DEFS.every((pane) => state.collapsedPanes.includes(pane.id));
-    update(() => { state.collapsedPanes = allCollapsed ? [] : PANE_DEFS.map((pane) => pane.id); });
+    if (event.key === "Control") { captureCtrlArmed = true; return; }
+    captureCtrlArmed = false;
+    const taskId = shortcutCapture;
+    if (event.key === "Escape") { shortcutCapture = null; shortcutConflict = null; renderShortcuts(); return; }
+    if (event.key === "Backspace" || event.key === "Delete") { assignShortcut(taskId, null); return; }
+    const candidate = keyFromEvent(event);
+    if (candidate) assignShortcut(taskId, candidate);
+    return;
   }
-  if (key === "b") { event.preventDefault(); update(() => { state.panesDocked = !state.panesDocked; }); }
+  if (event.key === "Escape") { closeMenu(); closeShortcuts(); ctrlArmed = false; return; }
+  if (event.key === "Control") {
+    if (!event.repeat && !isTypingTarget(event.target)) ctrlArmed = true;
+    return;
+  }
+  // Any other key while Control is held means it was a combo, not bare Ctrl.
+  ctrlArmed = false;
+  if (isTypingTarget(event.target)) return;
+  const candidate = keyFromEvent(event);
+  if (!candidate) return;
+  const task = SHORTCUT_TASKS.find((candidate2) => shortcutKey(candidate2.id) === candidate);
+  if (!task) return;
+  event.preventDefault();
+  runShortcut(task.id);
+});
+document.addEventListener("keyup", (event) => {
+  if (event.key !== "Control") return;
+  if (shortcutCapture) {
+    if (captureCtrlArmed) { captureCtrlArmed = false; assignShortcut(shortcutCapture, "ctrl"); }
+    return;
+  }
+  const wasArmed = ctrlArmed;
+  ctrlArmed = false;
+  if (!wasArmed || isTypingTarget(event.target)) return;
+  if (shortcutKey("menu") === "ctrl") runShortcut("menu");
+});
+
+// ---------------------------------------------------------------------------
+// Column extras: double-click a header renames it; double-click its right
+// edge (the resizer) clears that column's saved width.
+// ---------------------------------------------------------------------------
+document.addEventListener("dblclick", (event) => {
+  const resizer = event.target.closest && event.target.closest("[data-resize]");
+  if (resizer) {
+    const model = findModel(resizer);
+    if (!model) return;
+    resizing = null;
+    update(() => { delete tableState(model.id).columnWidths[resizer.dataset.resize]; });
+    return;
+  }
+  const header = event.target.closest && event.target.closest("th[data-col]");
+  if (!header || header.querySelector("input")) return;
+  const model = findModel(header);
+  if (!model) return;
+  const column = model.columns.find((candidate) => candidate.id === header.dataset.col);
+  if (!column) return;
+  const key = "col." + model.id + "." + column.id;
+  editInPlace(header, labelText(key, column.title) || column.title,
+    (text) => update(() => { state.labels[key] = text; }));
 });
 
 // ---------------------------------------------------------------------------

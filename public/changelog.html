@@ -6,45 +6,62 @@
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:,">
 <title>musestatus — Changelog</title>
-<style>
-/* Same visual system as the app: dense, hairline borders, light + dark. */
-:root {
-  --bg: #f7f8fa; --panel: #ffffff; --line: #e1e4e9; --text: #15181d; --muted: #646b76;
-  --accent: #0369a1; --hover: #eef2f6;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #0d1117; --panel: #151b23; --line: #2a313c; --text: #e6e9ee; --muted: #8b94a3; --accent: #58b4f0; --hover: #1c2430; color-scheme: dark; }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.45; }
-.page { max-width: 760px; margin: 0 auto; padding: 16px; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-h1 { font-size: 1.3em; font-weight: 650; margin: 0 0 4px; }
-.back { color: var(--muted); font-size: 0.92em; }
-.release { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
-.release h2 { font-size: 1.05em; font-weight: 650; margin: 0 0 4px; }
-.release .date { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
-.release ul { margin: 4px 0 0; padding-left: 18px; }
-.release li { margin: 2px 0; }
-code { font-family: var(--mono); font-size: 0.95em; }
-</style>
+<link rel="stylesheet" href="docs.css">
 </head>
-<body>
-<div class="page">
-  <a class="back" href="./">← musestatus</a>
-  <h1>Changelog</h1>
-
-  <div class="release">
-    <h2>v1.0.0 <span class="date">— 10/23/26</span></h2>
-    <ul>
-      <li>First release of musestatus at <code>armanai.pages.dev/musestatus/</code>: Muse's own status in 12 movable panes — Starred &amp; pinned, File system, Preferences, Machines, Connectors, Usage &amp; billing, Automations, Skills, Tools / namespaces, Assistants &amp; chats, Artifacts &amp; hub, and Memory.</li>
-      <li>Data is published by the VM (<code>musestatus-publish</code>) into KV and stamped per pane; the file-system pane browses per-folder chunks lazily and the Preferences pane loads file bodies on click.</li>
-      <li>Dense editable tables, floating panes window, edit mode, verbose toggle, spacing sliders, star toggles, and view state synced through KV — the claudestatus chrome, as a sibling app.</li>
-    </ul>
+<body data-view="full">
+<main>
+  <div class="docs-bar">
+    <a class="docs-home" href="./" title="musestatus" aria-label="musestatus">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
+    </a>
+    <span class="title">musestatus — Changelog</span>
+    <span class="spacer"></span>
+    <button class="docs-theme" type="button" aria-label="Toggle dark mode"></button>
   </div>
-</div>
+  <p class="subtitle">What changed in each release. <a href="./">← musestatus</a> · <a href="code-history.html">Code history →</a></p>
+  <div class="controls">
+    <button class="tab-btn" data-view="brief" aria-pressed="false">Brief</button>
+    <button class="tab-btn" data-view="full" aria-pressed="true">Full</button>
+  </div>
+
+  <div class="entries" id="entries">
+    <article class="entry" data-version="1.1.0">
+      <h2>v1.1.0<span class="date">10/28/26</span></h2>
+      <p>Ten new panes bring what the sibling status apps show to musestatus: Plugins (adapted), Claude Code versions, Local setup, Recent activity, GitHub repos, Cloudflare Pages, Disk usage, CLI versions, Workflows &amp; playbooks, and a Collector error log. New panes are tinted green with a NEW chip for this release. The burger menu gains a History section (this changelog plus a generated code-history page) and an assignable Shortcuts system, and every table gains claudestatus-style columns — double-click a header to rename it, double-click its edge to clear its width.</p>
+      <p class="full-only">The publisher (<code>~/workspace/muse-status-app/publish.py</code>) learned ten collectors: light ones ride the existing run (latest question per chat, largest home folders from the file walk's new per-directory sizes, and collector failures read from the hook logs and the publisher's own new run log); deep ones run on the 8-hour pass (connector/skill bundles, Claude Code versions probed over SSH per machine with the highest found treated as latest, this VM's MCP servers and instruction files, GitHub repos with their latest commits, all 38 Cloudflare Pages projects paged through the API, CLI version probes, and saved workflows — honestly none on disk — plus the custom-skill playbooks). Panes whose source cannot be read keep their previously published data; the section payloads carry <code>isNew</code> only for this release.</p>
+      <p class="full-only">Shortcuts: E edit mode, bare Ctrl burger menu (armed on keydown, fired on keyup, cancelled by any other key), A expand/collapse all, B left task pane, W wrap, T theme, P Panes panel, L changelog, H code history, K shortcuts. The Shortcuts popup captures new keys per task, flags conflicts in red without stealing them, and persists assignments in the synced view state like everything else.</p>
+    </article>
+
+    <article class="entry" data-version="1.0.0">
+      <h2>v1.0.0<span class="date">10/23/26</span></h2>
+      <p>musestatus launches: a data-driven status page for the Muse environment — 12 panes (Starred &amp; pinned, File system, Preferences, Machines, Connectors, Usage &amp; billing, Automations, Skills, Tools, Assistants &amp; chats, Artifacts &amp; hub, Memory). Data is collected on this VM by a publisher cron and served from D1 behind the hub proxy; every pane is reorderable, hideable and collapsible, every table's columns sortable, renamable, resizable and draggable, and the whole view state syncs across devices.</p>
+      <p class="full-only">Same-night storage migration: sections first published into a KV namespace, then moved to D1 (<code>musestatus_sections</code> / <code>musestatus_chunks</code> / <code>musestatus_view_state</code> in the shared anvari-hub database) once KV's write budget proved too tight; the publisher is hash-gated at both layers, so a run where nothing changed writes nothing. The worker gates every route except publishing behind the hub proxy key, and the app lives only at its hub path — the backend origin is never linked.</p>
+    </article>
+  </div>
+</main>
+<script src="docs-theme.js"></script>
+<script>
+"use strict";
+// Brief / Full: Brief shows one summary paragraph per release, Full shows
+// everything (the extra paragraphs carry the full-only class). The choice
+// persists, like the finviz and hub docs pages.
+(function () {
+  var body = document.body;
+  var buttons = document.querySelectorAll(".tab-btn");
+  function setView(view) {
+    body.setAttribute("data-view", view);
+    buttons.forEach(function (button) {
+      button.setAttribute("aria-pressed", String(button.dataset.view === view));
+    });
+    try { localStorage.setItem("musestatus-changelog-view", view); } catch (error) { /* private mode */ }
+  }
+  var saved = null;
+  try { saved = localStorage.getItem("musestatus-changelog-view"); } catch (error) { /* private mode */ }
+  if (saved === "brief" || saved === "full") setView(saved);
+  buttons.forEach(function (button) {
+    button.addEventListener("click", function () { setView(button.dataset.view); });
+  });
+})();
+</script>
 </body>
 </html>

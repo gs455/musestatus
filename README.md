@@ -2,6 +2,8 @@
 
 musestatus: one dense page showing the state of Arman's Muse setup itself — starred & pinned artifacts, the VM file system, the preference files and their change timeline, machines, connectors, usage ledgers, automations, skills, tools, chats, artifacts and memory. A sibling of claudestatus (which covers the Claude account); this one covers Muse.
 
+Current version: **v1.1.0** (2026-10-28) — see [CHANGELOG.md](CHANGELOG.md). v1.1.0 adds ten panes (plugins, Claude Code versions, local setup, recent activity, GitHub repos, Cloudflare Pages, disk usage, CLI versions, workflows, collector error log), docs-style changelog + generated code-history pages, and an assignable shortcuts system.
+
 Served at **https://armanai.pages.dev/musestatus/** behind the hub sign-in. Never link to the `*.pages.dev` address directly.
 
 ## Layout
@@ -11,7 +13,8 @@ Served at **https://armanai.pages.dev/musestatus/** behind the hub sign-in. Neve
 | `public/index.html` | The page shell and all styles. |
 | `public/app.js` | The whole app: pane machinery, table editing, and the section renderers. Data comes from `api/data` at view time — nothing is baked in. |
 | `public/_worker.js` | Gate (hub proxy key) + `api/prefs` (view state in D1) + `api/data` / `api/fs` / `api/prefbody` (published snapshots) + `api/publish` (publisher intake) + static files. |
-| `public/changelog.html` | Release notes, newest first. |
+| `public/changelog.html` | Release notes, newest first (Brief/Full), styled by `public/docs.css` + `public/docs-theme.js`. |
+| `public/code-history.html` | Generated from git history by `scripts/build-code-history.mjs` (config: `scripts/code-history.config.json`); regenerated at each release with `--pending` before committing. |
 | `wrangler.toml` | Pages config and the D1 binding `MUSESTATUS_DB`. |
 | `test-worker.mjs` | Node smoke test for the worker (gate, publish auth, prefs, fs). Run: `node test-worker.mjs`. |
 

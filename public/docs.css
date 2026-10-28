@@ -1,0 +1,110 @@
+/* Shared styling for musestatus' docs pages (changelog + code history).
+   Same look as the hub's docs pages: an icon bar (home + title + theme
+   toggle), then 12px Inter on a soft page background. Theme follows the
+   stored musestatus-docs-theme key, else the system preference. */
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+:root {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --line: #dfe3e8;
+  --text: #16181d;
+  --muted: #68707d;
+  --accent: #0369a1;
+  --good: #047857;
+  --bad: #b91c1c;
+  --add: #15803d;
+  --del: #dc2626;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: #151b23;
+  --line: #2a3140;
+  --text: #e6e9ee;
+  --muted: #8b94a3;
+  --accent: #58b4f0;
+  --good: #4ade80;
+  --bad: #f87171;
+  --add: #4ade80;
+  --del: #f87171;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.45 Inter, "Helvetica Neue", Arial, sans-serif;
+}
+main { max-width: 860px; margin: 0 auto; padding: 14px 16px 50px; }
+
+/* Icon bar: home flush left, theme toggle flush right. */
+.docs-bar { display: flex; align-items: center; gap: 7px; min-height: 26px; margin-bottom: 6px; }
+.docs-bar .title { font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+.docs-bar .spacer { flex: 1 1 auto; }
+.docs-home,
+.docs-theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: none;
+}
+.docs-home:hover,
+.docs-theme:hover { color: var(--text); border-color: var(--line); background: var(--panel); }
+
+/* Small text buttons (Brief / Full, sort order). */
+.tab-btn {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 1px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.tab-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.tab-btn:hover { color: var(--text); }
+
+p { margin: 4px 0 10px; }
+.subtitle { color: var(--muted); margin-bottom: 4px; }
+.controls { display: flex; gap: 5px; align-items: center; margin: 6px 0 4px; }
+
+/* Changelog entries: newest first. Brief shows the "brief" paragraph,
+   Full shows every paragraph. */
+.entries { list-style: none; margin: 6px 0 0; padding: 0; }
+.entry { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px 8px; margin-bottom: 7px; }
+.entry h2 { font-size: 12.5px; margin: 0 0 3px; font-weight: 700; }
+.entry h2 .date { color: var(--muted); font-weight: 500; font-size: 11px; margin-left: 6px; }
+.entry p { color: var(--text); margin: 2px 0; }
+.entry p.full-only { color: var(--muted); }
+body[data-view="brief"] .entry p.full-only { display: none; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+
+/* Code history: one section per release; commits newest first inside it. */
+.version-section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px 9px; margin-bottom: 9px; }
+.version-section > h2 { font-size: 12.5px; margin: 0 0 2px; font-weight: 700; }
+.version-section > h2 .date { color: var(--muted); font-weight: 500; font-size: 11px; margin-left: 6px; }
+.version-section > p { color: var(--muted); margin: 2px 0 6px; }
+.commit { border-top: 1px solid var(--line); padding: 5px 0 6px; }
+.commit:first-of-type { border-top: 0; }
+.commit .subject { font-weight: 650; }
+.commit .meta { color: var(--muted); font-size: 11px; margin-left: 6px; white-space: nowrap; }
+.commit .meta a { color: var(--accent); text-decoration: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.commit .meta a:hover { text-decoration: underline; }
+.commit .body { color: var(--muted); margin: 2px 0 0; white-space: pre-wrap; }
+.commit .files { list-style: none; margin: 4px 0 0; padding: 0; font-size: 11px; }
+.commit .files li { display: flex; gap: 7px; align-items: baseline; padding: 0.5px 0; }
+.commit .files .fname { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.commit .files .fstat { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
+.add { color: var(--add); font-weight: 650; }
+.del { color: var(--del); font-weight: 650; }

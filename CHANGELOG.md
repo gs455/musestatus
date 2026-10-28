@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.0 — 2026-10-28
+
+- Ten new panes, tinted green with a NEW chip for this release: Plugins (adapted) — Muse's connector/skill bundles; Claude Code versions per machine (SSH probes on deep runs, highest found = latest); Local setup (this VM's MCP servers, Claude Code config, instruction files); Recent activity (latest question per chat); GitHub repos (latest commit + author, via gh); Cloudflare Pages (all projects, hub path + slot, latest deploy); Disk usage (largest home folders from the walk, share rendered as a bar); CLI versions; Workflows & playbooks (saved workflows honestly none on disk, plus the custom-skill playbooks); Collector error log (hook-log failures + the publisher's own new run log). The publisher (`~/workspace/muse-status-app/publish.py`, not in this repo) gained the ten collectors — three light, seven deep — and the file walk now tracks per-directory byte sizes.
+- Burger menu gains a History section in the finviz/crypto fashion: a rebuilt changelog page (Brief/Full tabs, shared docs styling) and a code-history page generated from git history by the checked-in `scripts/build-code-history.mjs` + `scripts/code-history.config.json`, regenerated each release.
+- Claudestatus-style columns completed on every generic table: double-click a header to rename it, double-click the header's right edge to clear that column's saved width (drag rename/reorder/resize and the width-cycle button already existed; column state persists in the synced view state).
+- Shortcuts system (artifacts/hubv2 model): a Shortcuts button in the burger menu with an instant tooltip of the current assignments, opening a popup to reassign keys per task — conflicts flagged in red, never stolen; per-task revert and Reset all; assignments persist in the view state and sync. Stock keys: E edit mode, bare Ctrl menu (armed on keydown, fired on keyup), A expand/collapse all, B left task pane, W wrap, T theme, P Panes panel, L changelog, H code history, K shortcuts. The old Ctrl+E/M/A/B bindings are replaced by this system.
+
 ## v1.0.0 — 2026-10-23
 
 - Publish route dispatched before the hub gate (it carries its own Bearer key; the VM publisher never has the hub proxy key).
