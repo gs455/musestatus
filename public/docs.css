@@ -60,6 +60,23 @@ main { max-width: 860px; margin: 0 auto; padding: 14px 16px 50px; }
 .docs-home:hover,
 .docs-theme:hover { color: var(--text); border-color: var(--line); background: var(--panel); }
 
+/* Text nav link in the docs bar (the Changelog / Code history cross-link,
+   mirroring the /artifacts docs pages). */
+.docs-nav {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.docs-nav:hover { color: var(--text); border-color: var(--accent); }
+
 /* Small text buttons (Brief / Full, sort order). */
 .tab-btn {
   border: 1px solid var(--line);

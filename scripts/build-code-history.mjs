@@ -43,11 +43,14 @@ function localDate(iso) {
 }
 
 // --- Versions from CHANGELOG.md -------------------------------------------
-// Headers look like: ## v1.1.0 — 2026-10-28
+// Headers look like: ## v1.1.0 — 2026-10-28. The body capture must end at the
+// next version header or at end of file — an earlier "\s*$" lookahead
+// alternative matched immediately, so every body (and its bullets) came out
+// empty and the changelog text silently never rendered here.
 const changelog = fs.readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8");
 const versions = [];
 {
-  const re = /^## (v[\d.]+) — (\d{4}-\d{2}-\d{2})\s*$([\s\S]*?)(?=^## v|\s*$)/gm;
+  const re = /^## (v[\d.]+) — (\d{4}-\d{2}-\d{2})[ \t]*$([\s\S]*?)(?=^## v[\d.]+ — |(?![\s\S]))/gm;
   let m;
   while ((m = re.exec(changelog)) !== null) {
     const bullets = [...m[3].matchAll(/^- (.+)$/gm)].map((b) => b[1].trim());
@@ -161,6 +164,7 @@ const html = `<!doctype html>
     </a>
     <span class="title">${escapeHtml(config.title)} — Code history</span>
     <span class="spacer"></span>
+    <a class="docs-nav" href="changelog.html">Changelog</a>
     <button class="docs-theme" type="button" aria-label="Toggle dark mode"></button>
   </div>
   <p class="subtitle">Every committed change, grouped by release. Generated from git history on ${generated}; regenerating is part of the release ritual (see <code>scripts/build-code-history.mjs</code>). <a href="./">← ${escapeHtml(config.title)}</a> · <a href="changelog.html">Changelog →</a></p>

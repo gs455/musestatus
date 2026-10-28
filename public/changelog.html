@@ -16,6 +16,7 @@
     </a>
     <span class="title">musestatus — Changelog</span>
     <span class="spacer"></span>
+    <a class="docs-nav" href="code-history.html">Code history</a>
     <button class="docs-theme" type="button" aria-label="Toggle dark mode"></button>
   </div>
   <p class="subtitle">What changed in each release. <a href="./">← musestatus</a> · <a href="code-history.html">Code history →</a></p>
@@ -25,6 +26,12 @@
   </div>
 
   <div class="entries" id="entries">
+    <article class="entry" data-version="1.2.0">
+      <h2>v1.2.0<span class="date">10/28/26</span></h2>
+      <p>The burger menu's two history entries become one — <strong>Code History / CL</strong> — opening the code-history page, which now carries a Changelog button in its bar (the /artifacts arrangement); this page keeps its Brief/Full tabs and links back. The Shortcuts popup follows: a single “Code History / CL” task on H, with L free. The burger also gains “How to use”, a Shortcuts-style popup guide you can edit in place, and a new V shortcut opens the burger menu at your cursor.</p>
+      <p class="full-only">The saved-shortcuts migration runs once: if your Changelog/Code history keys still sat at the old stock L and H, the L entry is dropped so the combined task stands alone on H; any key you customized is left exactly as it was. The How to use text saves into the synced view state (<code>howToUseText</code>, empty = stock) with Save and Revert to stock, exactly like /artifacts. V is distinct from bare Ctrl: Ctrl toggles the menu at the burger button, V toggles it wherever the mouse last was, and Esc closes it either way. Behind the scenes, the code-history generator's version regex was fixed — its changelog bullets had silently rendered empty since v1.1.0; each release section there now shows its changelog text above its commits, as intended.</p>
+    </article>
+
     <article class="entry" data-version="1.1.1">
       <h2>v1.1.1<span class="date">10/28/26</span></h2>
       <p>The Shortcuts popup gets a new stock key: S toggles it open and closed (Esc still closes it too), mirroring /artifacts, and K is freed. If you had never customized that key, nothing changes for you beyond the letter — a saved override still pinning the old stock K is migrated once on load, and any key you chose yourself is left exactly as it was.</p>

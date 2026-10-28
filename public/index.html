@@ -204,6 +204,16 @@ tr.group-row td { background: var(--thbg); font-weight: 650; color: var(--text);
 .sc-foot button { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px; color: var(--text); }
 .sc-foot button:hover { border-color: var(--accent); }
 
+/* How to use dialog (same overlay/window shell as Shortcuts, wider) */
+.howto-window { width: 560px; }
+.howto-body h3 { font-size: 1em; margin: 10px 0 3px; }
+.howto-body h3:first-child { margin-top: 2px; }
+.howto-body p { margin: 3px 0; }
+.howto-body ul { margin: 3px 0; padding-left: 18px; }
+.howto-body li { margin: 2px 0; }
+.howto-text { width: 100%; box-sizing: border-box; min-height: 300px; font: inherit; font-size: 0.95em; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+.howto-actions { display: inline-flex; gap: 6px; }
+
 /* Star toggles */
 .star { border: 0; background: none; cursor: pointer; font-size: 13px; padding: 0; color: var(--muted); line-height: 1; }
 .star.on { color: var(--star); }
@@ -308,6 +318,7 @@ body.editing [data-lk] { outline: 1px dashed color-mix(in srgb, var(--accent) 50
 </div>
 <div id="menuHost"></div>
 <div id="shortcutsHost"></div>
+<div id="howtoHost"></div>
 <div class="tip" id="tip" hidden></div>
 <script src="app.js"></script>
 </body>

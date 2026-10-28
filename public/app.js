@@ -65,6 +65,8 @@ const DEFAULT_STATE = {
   stars: [], // artifact slugs starred inside this app
   shortcuts: {}, // shortcut task id -> key string, or null when unassigned
   shortcutStockMigrated: false, // one-time K -> S stock migration (v1.1.1) applied
+  historyStockMigrated: false, // one-time Changelog/Code-history collapse migration (v1.2.0) applied
+  howToUseText: "", // Arman's edited How to use guide; "" means the stock text
 };
 let state = loadState();
 // One-time migration (v1.1.1): the Shortcuts task's stock key moved from K
@@ -76,6 +78,21 @@ function migrateShortcutStock() {
   if (state.shortcutStockMigrated) return false;
   state.shortcutStockMigrated = true;
   if (state.shortcuts && state.shortcuts.shortcuts === "k") delete state.shortcuts.shortcuts;
+  return true;
+}
+// One-time migration (v1.2.0): the separate "Open Changelog" (stock L) and
+// "Open Code history" (stock H) tasks collapse into one "Code History / CL"
+// task on stock H. If a saved map still holds both at their old stock values,
+// drop the L entry so the combined task stands alone on H; a key customized
+// on either task is a deliberate choice and stays untouched. Marked in the
+// state so it runs exactly once, from either store.
+function migrateHistoryStock() {
+  if (state.historyStockMigrated) return false;
+  state.historyStockMigrated = true;
+  const saved = state.shortcuts || {};
+  const changelogCustom = Object.prototype.hasOwnProperty.call(saved, "changelog") && saved.changelog !== "l";
+  const historyCustom = Object.prototype.hasOwnProperty.call(saved, "history") && saved.history !== "h";
+  if (!changelogCustom && !historyCustom && saved.changelog === "l") delete saved.changelog;
   return true;
 }
 
@@ -119,6 +136,7 @@ function pullPrefs() {
       if (!Array.isArray(state.stars)) state.stars = [];
       const receivedJson = JSON.stringify(state);
       migrateShortcutStock();
+      migrateHistoryStock();
       lastSyncedJson = receivedJson;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (error) { /* storage blocked */ }
       if (JSON.stringify(state) !== receivedJson) pushPrefs();
@@ -139,9 +157,11 @@ function columnWidth(model, column) {
   return Math.max(24, Math.round(base * table.scale * state.tableScale / 100));
 }
 function update(change) { change(); saveState(); render(); }
-// Apply the K -> S migration to the locally loaded state (the synced copy
-// gets the same pass in pullPrefs); saveState persists the marker.
-if (migrateShortcutStock()) saveState();
+// Apply the one-time migrations to the locally loaded state (the synced copy
+// gets the same pass in pullPrefs); saveState persists the markers.
+const migratedLocally = migrateShortcutStock();
+const migratedHistoryLocally = migrateHistoryStock();
+if (migratedLocally || migratedHistoryLocally) saveState();
 
 // ---------------------------------------------------------------------------
 // Published data
@@ -1023,13 +1043,14 @@ document.addEventListener("pointerup", () => {
 const SHORTCUT_TASKS = [
   { id: "edit", label: "Toggle edit mode", stockKey: "e" },
   { id: "menu", label: "Toggle burger menu", stockKey: "ctrl" },
+  { id: "menuCursor", label: "Burger menu (at cursor)", stockKey: "v" },
   { id: "expand", label: "Toggle expand / collapse all panes", stockKey: "a" },
   { id: "dock", label: "Toggle left task pane", stockKey: "b" },
   { id: "wrap", label: "Toggle text wrap (all tables)", stockKey: "w" },
   { id: "theme", label: "Toggle theme", stockKey: "t" },
   { id: "panes", label: "Toggle Panes panel", stockKey: "p" },
-  { id: "changelog", label: "Open Changelog", stockKey: "l" },
-  { id: "history", label: "Open Code history", stockKey: "h" },
+  { id: "history", label: "Code History / CL", stockKey: "h" },
+  { id: "howto", label: "How to use", stockKey: null },
   { id: "shortcuts", label: "Toggle Shortcuts", stockKey: "s" },
 ];
 function shortcutKey(taskId) {
@@ -1064,13 +1085,14 @@ function toggleLeftTaskPane() {
 function runShortcut(taskId) {
   if (taskId === "edit") update(() => { state.editing = !state.editing; });
   else if (taskId === "menu") openMenu();
+  else if (taskId === "menuCursor") openMenu(true);
   else if (taskId === "expand") toggleExpandCollapseAll();
   else if (taskId === "dock") toggleLeftTaskPane();
   else if (taskId === "wrap") update(() => { state.wrapAll = !state.wrapAll; });
   else if (taskId === "theme") toggleTheme();
   else if (taskId === "panes") update(() => { state.panesPanelOpen = !state.panesPanelOpen; });
-  else if (taskId === "changelog") window.location.href = "changelog.html";
   else if (taskId === "history") window.location.href = "code-history.html";
+  else if (taskId === "howto") openHowto();
   else if (taskId === "shortcuts") toggleShortcuts();
 }
 function shortcutsTipHtml() {
@@ -1152,6 +1174,93 @@ function assignShortcut(taskId, key) {
 }
 
 // ---------------------------------------------------------------------------
+// How to use — a short guide in a popup on the Shortcuts pattern (/artifacts
+// model). The stock text lives here; Arman's edit is state.howToUseText,
+// synced through api/prefs like the rest of the view state, and "" means
+// stock. Mini-format: "## " starts a heading, "- " a bullet, anything else
+// a paragraph.
+// ---------------------------------------------------------------------------
+const STOCK_GUIDE = [
+  "## What this page is",
+  "musestatus is the live status page for Mo — Arman's Muse — and the VM it runs on: 22 panes of machines, connectors, usage, files and memory, published from this VM. The line under the title gives the newest data on the page; every pane carries its own \"as of\" stamp.",
+  "## Panes",
+  "- ⭐ Starred & pinned: artifacts pinned in the Artifacts app, plus rows you star in the Artifacts & hub pane.",
+  "- 🗂 File system browses this VM's tree — names, sizes and dates only, never contents. 📋 Preferences shows the files that steer Muse and the day-by-day timeline of their changes.",
+  "- The green panes are the ten added in v1.1.0: Plugins, Claude Code versions, Local setup, Recent activity, GitHub repos, Cloudflare Pages, Disk usage, CLI versions, Workflows & playbooks, Collector error log.",
+  "## Working the page",
+  "- E toggles edit mode: rename or hide any label, drag panes to rearrange them; on a table, double-click a header to rename it, drag it to move the column, drag its edge to resize, double-click the edge to clear a width.",
+  "- S opens Shortcuts — every key on this page can be reassigned there. The burger menu holds the rest: text wrap, the Instant tooltips toggle (off: tooltips wait 0.2s), hidden panes, spacing sliders, and Reset everything to stock.",
+  "## Refreshes",
+  "- A publisher on this VM runs every 30 minutes; a deep pass (SSH probes, GitHub, Cloudflare) runs roughly every 8 hours. Publishing is hash-gated: a pane whose data did not change is not rewritten, and keeps its older \"as of\" stamp.",
+  "- The page does not live-update — reload to see the latest.",
+  "## This text",
+  "- Edit rewrites this guide in your own words; Save keeps it (it syncs like the rest of the view), Revert restores the stock text.",
+].join("\n");
+
+function guideText() {
+  return state.howToUseText || STOCK_GUIDE;
+}
+function renderGuideText(text) {
+  let html = "";
+  text.split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (trimmed.indexOf("## ") === 0) html += "<h3>" + escapeHtml(trimmed.slice(3)) + "</h3>";
+    else if (trimmed.indexOf("- ") === 0) html += "<ul><li>" + escapeHtml(trimmed.slice(2)) + "</li></ul>";
+    else html += "<p>" + escapeHtml(trimmed) + "</p>";
+  });
+  // Merge adjacent one-item lists into a single list.
+  return html.replace(/<\/ul><ul>/g, "");
+}
+let howtoEditing = false;
+let howtoNote = "";
+function howtoIsOpen() {
+  const host = document.getElementById("howtoHost");
+  return !!host && host.innerHTML !== "";
+}
+function openHowto() {
+  closeMenu();
+  howtoEditing = false;
+  howtoNote = "";
+  renderHowto();
+}
+function closeHowto() {
+  const host = document.getElementById("howtoHost");
+  if (host) host.innerHTML = "";
+  howtoEditing = false;
+  howtoNote = "";
+}
+function renderHowto() {
+  const host = document.getElementById("howtoHost");
+  if (!host) return;
+  let inner = '<div class="sc-head"><span>How to use</span><button class="sc-close" data-howto-close aria-label="Close">✕</button></div>';
+  if (howtoEditing || howtoNote) inner += '<div class="sc-note">' + escapeHtml(howtoNote) + "</div>";
+  if (howtoEditing) {
+    inner += '<textarea class="howto-text" id="howtoTextarea">' + escapeHtml(guideText()) + "</textarea>"
+      + '<div class="sc-foot"><button data-howto-save>Save</button><span class="howto-actions">'
+      + '<button data-howto-revert>Revert to stock</button><button data-howto-cancel>Cancel</button></span></div>';
+  } else {
+    inner += '<div class="howto-body">' + renderGuideText(guideText()) + "</div>"
+      + '<div class="sc-foot"><button data-howto-edit>Edit</button><button data-howto-close>Done</button></div>';
+  }
+  host.innerHTML = '<div class="sc-overlay" data-howto-overlay><div class="sc-window howto-window" role="dialog" aria-label="How to use">'
+    + inner + "</div></div>";
+  if (howtoEditing) {
+    const area = document.getElementById("howtoTextarea");
+    if (area) area.focus();
+  }
+}
+function saveHowto() {
+  const area = document.getElementById("howtoTextarea");
+  if (!area) return;
+  const text = area.value.trim();
+  update(() => { state.howToUseText = text === STOCK_GUIDE.trim() ? "" : text; });
+  howtoEditing = false;
+  howtoNote = "Guide saved — it syncs to your other devices.";
+  renderHowto();
+}
+
+// ---------------------------------------------------------------------------
 // Burger menu
 // ---------------------------------------------------------------------------
 function closeMenu() { document.getElementById("menuHost").innerHTML = ""; }
@@ -1159,15 +1268,21 @@ function slider(key, text, min, max, step, unit, value) {
   return '<div class="slider"><span>' + text + '</span><span id="' + key + 'Value">' + value + unit + "</span>"
     + '<input type="range" id="' + key + 'Slider" data-slider="' + key + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + value + '" aria-label="' + text + '"></div>';
 }
-function openMenu() {
+// Last known mouse position in page coordinates, for the "Burger menu (at
+// cursor)" shortcut (stock V). Null until the mouse first moves.
+let lastMousePage = null;
+document.addEventListener("mousemove", (event) => {
+  lastMousePage = { x: event.pageX, y: event.pageY };
+});
+
+function openMenu(atCursor) {
   const host = document.getElementById("menuHost");
   if (host.innerHTML) { closeMenu(); return; }
   const hidden = state.hiddenPanes.map((id) => PANE_DEFS.find((pane) => pane.id === id)).filter(Boolean);
   const keyHint = (taskId) => '<span class="kbd">' + escapeHtml(formatKey(shortcutKey(taskId))) + "</span>";
   let html = '<div class="menu" role="menu">'
-    + '<div class="h">History</div>'
-    + '<a class="item" href="changelog.html">Changelog ' + keyHint("changelog") + '</a>'
-    + '<a class="item" href="code-history.html">Code history ' + keyHint("history") + '</a><hr>'
+    + '<a class="item" href="code-history.html">Code History / CL ' + keyHint("history") + '</a>'
+    + '<button class="item" data-menu="howto">How to use ' + keyHint("howto") + '</button><hr>'
     + '<label class="item">Edit mode ' + keyHint("edit") + '<input type="checkbox" id="editToggle"' + (state.editing ? " checked" : "") + "></label>"
     + '<label class="item">Verbose <input type="checkbox" id="verboseToggle"' + (state.verbose ? " checked" : "") + "></label>"
     + '<label class="item">Instant tooltips <input type="checkbox" id="instantTooltipsToggle"' + (state.instantTooltips ? " checked" : "") + "></label>"
@@ -1187,10 +1302,24 @@ function openMenu() {
     + slider("tableScale", "Table width (all)", 40, 150, 5, "%", state.tableScale)
     + '<hr><button class="item" data-menu="reset">Reset everything to stock</button></div>';
   host.innerHTML = html;
-  const anchor = document.getElementById("burgerButton").getBoundingClientRect();
   const menu = host.firstChild;
-  menu.style.left = Math.max(16, anchor.left) + "px";
-  menu.style.top = anchor.bottom + window.scrollY + 4 + "px";
+  if (atCursor && lastMousePage) {
+    // Open at the cursor, then pull the menu back inside the viewport if it
+    // would spill past the right or bottom edge.
+    menu.style.left = lastMousePage.x + "px";
+    menu.style.top = lastMousePage.y + "px";
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 8) {
+      menu.style.left = Math.max(8, lastMousePage.x - (rect.right - (window.innerWidth - 8))) + "px";
+    }
+    if (rect.bottom > window.innerHeight - 8) {
+      menu.style.top = Math.max(window.scrollY + 8, lastMousePage.y - (rect.bottom - (window.innerHeight - 8))) + "px";
+    }
+  } else {
+    const anchor = document.getElementById("burgerButton").getBoundingClientRect();
+    menu.style.left = Math.max(16, anchor.left) + "px";
+    menu.style.top = anchor.bottom + window.scrollY + 4 + "px";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,6 +1387,23 @@ document.addEventListener("click", (event) => {
   if (target.closest("[data-sc-close]")) { closeShortcuts(); return; }
   if (target.closest("[data-sc-overlay]") && !target.closest(".sc-window")) { closeShortcuts(); return; }
 
+  // How to use dialog
+  if (target.closest("[data-howto-close]")) { closeHowto(); return; }
+  if (target.closest("[data-howto-overlay]") && !target.closest(".sc-window")) { closeHowto(); return; }
+  if (target.closest("[data-howto-edit]")) { howtoEditing = true; howtoNote = ""; renderHowto(); return; }
+  if (target.closest("[data-howto-cancel]")) { howtoEditing = false; howtoNote = ""; renderHowto(); return; }
+  if (target.closest("[data-howto-revert]")) {
+    // Swap the textarea to the stock text and note it, without re-rendering
+    // (the edit in progress is the textarea's own value).
+    const area = document.getElementById("howtoTextarea");
+    if (area) area.value = STOCK_GUIDE;
+    howtoNote = "Stock text restored — Save to keep it.";
+    const note = document.querySelector(".howto-window .sc-note");
+    if (note) note.textContent = howtoNote;
+    return;
+  }
+  if (target.closest("[data-howto-save]")) { saveHowto(); return; }
+
   if (target.closest("[data-panel-open]")) { update(() => { state.panesPanelOpen = true; }); return; }
   if (target.closest("#burgerButton")) { openMenu(); return; }
   if (target.closest("#panesButton")) { update(() => { state.panesPanelOpen = !state.panesPanelOpen; }); return; }
@@ -1285,6 +1431,7 @@ document.addEventListener("click", (event) => {
   if ((match = target.closest("[data-menu]"))) {
     const action = match.dataset.menu;
     if (action === "shortcuts") { openShortcuts(); return; }
+    if (action === "howto") { openHowto(); return; }
     if (action === "collapse-all") update(() => { state.collapsedPanes = PANE_DEFS.map((pane) => pane.id); });
     if (action === "expand-all") update(() => { state.collapsedPanes = []; });
     if (action === "reset") update(() => {
@@ -1483,7 +1630,7 @@ document.addEventListener("keydown", (event) => {
     if (candidate) assignShortcut(taskId, candidate);
     return;
   }
-  if (event.key === "Escape") { closeMenu(); closeShortcuts(); ctrlArmed = false; return; }
+  if (event.key === "Escape") { closeMenu(); closeShortcuts(); closeHowto(); ctrlArmed = false; return; }
   if (event.key === "Control") {
     if (!event.repeat && !isTypingTarget(event.target)) ctrlArmed = true;
     return;

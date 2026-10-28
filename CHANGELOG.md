@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.0 — 2026-10-28
+
+- Burger menu: the separate Changelog and Code history entries combine into one "Code History / CL" button (model: /artifacts) that opens the code-history page. The code-history page carries a Changelog button in its docs bar, and the changelog page keeps its Brief/Full presentation and links back — the pair stays cross-linked from one entry point. The shortcut tasks collapse to match: one "Code History / CL" task on stock H opens the combined page, and L is unassigned by default. Saved maps migrate once (`historyStockMigrated` in the synced state): an L/H pair still at the old stock values drops the L entry; a key customized on either task is left untouched.
+- New burger item "How to use": a popup on the Shortcuts pattern with a succinct guide to the page (what it is, Starred and the file browser, edit mode, refreshes, the green v1.1.0 panes), editable in place — Edit → textarea → Save / Revert to stock — persisted as `howToUseText` in the synced view state ("" = stock), mirroring /artifacts. Its Shortcuts task ("How to use") starts unassigned.
+- New shortcut task "Burger menu (at cursor)" on stock V: V opens the burger menu at the last known mouse position (tracked on mousemove; the normal burger anchor when none is known) and V again closes it; Esc closes it as usual. Bare Ctrl still toggles the menu at its normal anchor. All other stock keys are unchanged, and there is still no autofit task — A remains expand/collapse all only.
+- Code-history generator fix: the version-body regex in `scripts/build-code-history.mjs` ended its lazy capture at the first `\s*$` lookahead, so every version's changelog bullets silently rendered empty in code-history.html since v1.1.0. The capture now ends at the next version header or end of file, and the bullets appear above each release's commits as the generator always intended.
+
 ## v1.1.1 — 2026-10-28
 
 - Shortcuts: the Shortcuts popup's stock key moves from K to S (mirroring /artifacts) and becomes a toggle — S opens the popup, S again closes it; Esc still closes it as before, and a key capture in progress still wins over the toggle. K is freed. Saved view state migrates once on load: an override still pinning the old stock "k" is dropped so the task lands on the new stock S, while any customized key is left untouched (marked via `shortcutStockMigrated` in the synced state).
